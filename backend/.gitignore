@@ -1,0 +1,13 @@
+# Python venv
+backend/venv/
+
+# Expo / React Native
+mobile/node_modules/
+mobile/.expo/
+mobile/.expo-shared/
+
+# Cachés Python
+__pycache__/
+
+# Cachés de dependencias
+*.pyc
