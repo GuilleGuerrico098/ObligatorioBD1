@@ -1,20 +1,80 @@
-import React from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   FlatList,
+  Alert,
+  ActivityIndicator,
 } from 'react-native';
-
-const MOCK_PARTICIPANTES = [
-  { ci: '41234567', nombre: 'Juan Pérez', rol: 'Alumno', programa: 'Ing. Informática' },
-  { ci: '59876543', nombre: 'María García', rol: 'Docente', programa: 'Redes' },
-];
+import { useFocusEffect } from '@react-navigation/native';
+import { listarParticipantes, borrarParticipante } from '../../api';
 
 export default function AdminParticipantes({ navigation }) {
-  const handleFakeAction = (accion) => {
-    alert(`Esto es solo la interfaz de ${accion}.\nDespués conectamos con la API.`);
+  const [participantes, setParticipantes] = useState([]);
+  const [cargando, setCargando] = useState(true);
+
+  const mapTipoHumano = (t) => {
+    if (t === 'grado') return 'Alumno';
+    if (t === 'posgrado') return 'Posgrado';
+    if (t === 'docente') return 'Docente';
+    return t;
+  };
+
+  const cargar = async () => {
+    try {
+      setCargando(true);
+      const data = await listarParticipantes();
+
+      const formateados = data.map((p) => ({
+        ci: p.ci,
+        nombre: `${p.nombre} ${p.apellido}`,
+        rol: mapTipoHumano(p.tipo),
+        programa: '—',
+      }));
+
+      setParticipantes(formateados);
+    } catch (e) {
+      Alert.alert('Error', e.message);
+    } finally {
+      setCargando(false);
+    }
+  };
+
+  useFocusEffect(
+    useCallback(() => {
+      cargar();
+    }, [])
+  );
+
+  const handleEliminar = (ci) => {
+    Alert.alert(
+      'Eliminar participante',
+      `¿Seguro que querés eliminar al participante CI ${ci}?`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Eliminar',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await borrarParticipante(ci);
+              setParticipantes((prev) => prev.filter((p) => p.ci !== ci));
+            } catch (e) {
+              Alert.alert('Error', e.message);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleEditar = (item) => {
+    Alert.alert(
+      'Editar participante',
+      `Función pendiente para ${item.nombre}.`
+    );
   };
 
   const renderItem = ({ item }) => (
@@ -27,19 +87,43 @@ export default function AdminParticipantes({ navigation }) {
       <View style={styles.actions}>
         <TouchableOpacity
           style={[styles.btn, styles.btnEdit]}
-          onPress={() => handleFakeAction('modificación')}
+          onPress={() => handleEditar(item)}
         >
           <Text style={styles.btnText}>Editar</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.btn, styles.btnDelete]}
-          onPress={() => handleFakeAction('baja')}
+          onPress={() => handleEliminar(item.ci)}
         >
           <Text style={styles.btnText}>Eliminar</Text>
         </TouchableOpacity>
       </View>
     </View>
   );
+
+  if (cargando) {
+    return (
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color="#dc2626" />
+      </View>
+    );
+  }
+
+  if (participantes.length === 0) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.title}>ABM de participantes</Text>
+        <Text style={styles.subtitle}>No hay participantes registrados.</Text>
+
+        <TouchableOpacity
+          style={styles.primaryButton}
+          onPress={() => navigation.navigate('AdminCrearParticipante')}
+        >
+          <Text style={styles.primaryButtonText}>+ Nuevo participante</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -56,7 +140,7 @@ export default function AdminParticipantes({ navigation }) {
       </TouchableOpacity>
 
       <FlatList
-        data={MOCK_PARTICIPANTES}
+        data={participantes}
         keyExtractor={(item) => item.ci}
         renderItem={renderItem}
         ItemSeparatorComponent={() => <View style={{ height: 8 }} />}

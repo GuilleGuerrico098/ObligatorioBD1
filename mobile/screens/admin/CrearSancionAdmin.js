@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -7,14 +7,12 @@ import {
   TouchableOpacity,
   ScrollView,
   Platform,
+  Alert,
+  ActivityIndicator,
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Picker } from '@react-native-picker/picker';
-
-const PARTICIPANTES = [
-  { id: '41234567', nombre: 'Juan Pérez' },
-  { id: '59876543', nombre: 'María García' },
-];
+import { listarParticipantes, crearSancion } from '../../api';
 
 function formatDateForHtml(date) {
   const y = date.getFullYear();
@@ -29,12 +27,35 @@ function parseHtmlDate(value, current) {
   return new Date(y, m - 1, d);
 }
 
-export default function CrearSancionAdmin() {
-  const [participanteId, setParticipanteId] = useState(PARTICIPANTES[0].id);
+export default function CrearSancionAdmin({ navigation }) {
+  const [participantes, setParticipantes] = useState([]);
+  const [participanteId, setParticipanteId] = useState(null);
+
   const [motivo, setMotivo] = useState('');
   const [duracionDias, setDuracionDias] = useState('');
   const [hasta, setHasta] = useState(new Date());
   const [showDatePicker, setShowDatePicker] = useState(false);
+
+  const [cargando, setCargando] = useState(true);
+  const [guardando, setGuardando] = useState(false);
+
+  useEffect(() => {
+    async function cargar() {
+      try {
+        setCargando(true);
+        const data = await listarParticipantes();
+        setParticipantes(data);
+        if (data.length > 0) {
+          setParticipanteId(data[0].ci);
+        }
+      } catch (e) {
+        Alert.alert('Error', e.message);
+      } finally {
+        setCargando(false);
+      }
+    }
+    cargar();
+  }, []);
 
   const handleChangeDuracion = (texto) => {
     const soloNumeros = texto.replace(/\D/g, '');
@@ -50,13 +71,57 @@ export default function CrearSancionAdmin() {
     }
   };
 
-  const handleSubmit = () => {
-    const participante = PARTICIPANTES.find((p) => p.id === participanteId)?.nombre;
+  const handleSubmit = async () => {
+    if (!participanteId) {
+      Alert.alert('Error', 'Seleccioná un participante.');
+      return;
+    }
+    if (!motivo) {
+      Alert.alert('Error', 'Ingresá un motivo.');
+      return;
+    }
 
-    alert(
-      `Demo alta sanción\n\nParticipante: ${participante}\nMotivo: ${motivo}\nHasta: ${hasta.toLocaleDateString()}\nDuración (días): ${duracionDias}`
-    );
+    const fechaFinStr = hasta.toISOString().slice(0, 10);
+    const motivoCompleto = `${motivo} (hasta ${fechaFinStr}${
+      duracionDias ? `, duración aproximada ${duracionDias} días` : ''
+    })`;
+
+    try {
+      setGuardando(true);
+      const diasNum = duracionDias ? parseInt(duracionDias, 10) || 60 : 60;
+      await crearSancion(participanteId, motivoCompleto, diasNum);
+
+      Alert.alert('Éxito', 'Sanción creada correctamente.', [
+        {
+          text: 'OK',
+          onPress: () => {
+            navigation.navigate('AdminDashboard');
+          },
+        },
+      ]);
+    } catch (e) {
+      Alert.alert('Error', e.message);
+    } finally {
+      setGuardando(false);
+    }
   };
+
+  if (cargando) {
+    return (
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color="#dc2626" />
+      </View>
+    );
+  }
+
+  if (participantes.length === 0) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.title}>Nueva sanción</Text>
+        <Text style={styles.subtitle}>No hay participantes registrados.</Text>
+      </View>
+    );
+  }
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 24 }}>
@@ -70,13 +135,13 @@ export default function CrearSancionAdmin() {
         <View style={styles.pickerContainer}>
           <Picker
             selectedValue={participanteId}
-            onValueChange={(v) => setParticipanteId(v)}
+            onValueChange={setParticipanteId}
           >
-            {PARTICIPANTES.map((p) => (
+            {participantes.map((p) => (
               <Picker.Item
-                key={p.id}
-                label={`${p.nombre} - CI ${p.id}`}
-                value={p.id}
+                key={p.ci}
+                label={`${p.nombre} ${p.apellido} - CI ${p.ci}`}
+                value={p.ci}
               />
             ))}
           </Picker>
@@ -137,8 +202,10 @@ export default function CrearSancionAdmin() {
         />
       </View>
 
-      <TouchableOpacity style={styles.primaryButton} onPress={handleSubmit}>
-        <Text style={styles.primaryButtonText}>Guardar sanción (demo)</Text>
+      <TouchableOpacity style={styles.primaryButton} onPress={handleSubmit} disabled={guardando}>
+        <Text style={styles.primaryButtonText}>
+          {guardando ? 'Guardando...' : 'Guardar sanción'}
+        </Text>
       </TouchableOpacity>
     </ScrollView>
   );

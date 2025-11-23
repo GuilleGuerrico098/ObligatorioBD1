@@ -15,129 +15,138 @@ import AdminParticipantes from './screens/admin/AdminParticipantes';
 import AdminReservas from './screens/admin/AdminReservas';
 import AdminSalas from './screens/admin/AdminSalas';
 import AdminSanciones from './screens/admin/AdminSanciones';
-
 import CrearParticipanteAdmin from './screens/admin/CrearParticipanteAdmin';
-import CrearSalaAdmin from './screens/admin/CrearSalaAdmin';
 import CrearReservaAdmin from './screens/admin/CrearReservaAdmin';
+import CrearSalaAdmin from './screens/admin/CrearSalaAdmin';
 import CrearSancionAdmin from './screens/admin/CrearSancionAdmin';
+import AdminEstadisticas from './screens/admin/AdminEstadisticas';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
+const AdminStack = createNativeStackNavigator();
 
 function UserTabs() {
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
         headerTitleAlign: 'center',
-        tabBarActiveTintColor: '#2563eb',
-        tabBarInactiveTintColor: '#64748b',
-        tabBarStyle: { backgroundColor: '#f8fafc' },
         tabBarIcon: ({ color, size }) => {
-          let iconName = 'home';
+          let icon = 'home';
 
-          if (route.name === 'Inicio') iconName = 'home';
-          if (route.name === 'CrearReserva') iconName = 'add-circle';
-          if (route.name === 'MisReservas') iconName = 'calendar';
-          if (route.name === 'Salas') iconName = 'business';
+          if (route.name === 'HomeUser') icon = 'home';
+          if (route.name === 'CrearReserva') icon = 'add-circle';
+          if (route.name === 'MisReservas') icon = 'calendar';
+          if (route.name === 'Salas') icon = 'business';
 
-          return <Ionicons name={iconName} size={size} color={color} />;
+          return <Ionicons name={icon} size={size} color={color} />;
         },
       })}
     >
-      <Tab.Screen name="Inicio" component={HomeUser} />
+      <Tab.Screen
+        name="HomeUser"
+        component={HomeUser}
+        options={{ title: 'Inicio' }}
+      />
       <Tab.Screen
         name="CrearReserva"
         component={CrearReserva}
-        options={{ title: 'Crear reserva' }}
+        options={{ title: 'Nueva reserva' }}
       />
       <Tab.Screen
         name="MisReservas"
         component={MisReservas}
         options={{ title: 'Mis reservas' }}
       />
-      <Tab.Screen name="Salas" component={Salas} />
+      <Tab.Screen
+        name="Salas"
+        component={Salas}
+        options={{ title: 'Salas' }}
+      />
     </Tab.Navigator>
   );
 }
 
 function AdminTabs() {
   return (
-    <Tab.Navigator
-      screenOptions={({ route }) => ({
-        headerTitleAlign: 'center',
-        tabBarActiveTintColor: '#dc2626',
-        tabBarInactiveTintColor: '#64748b',
-        tabBarStyle: { backgroundColor: '#f8fafc' },
-        tabBarIcon: ({ color, size }) => {
-          let iconName = 'speedometer';
-
-          if (route.name === 'Dashboard') iconName = 'speedometer';
-          if (route.name === 'AdminParticipantes') iconName = 'people';
-          if (route.name === 'AdminReservas') iconName = 'clipboard';
-          if (route.name === 'AdminSalas') iconName = 'business';
-          if (route.name === 'AdminSanciones') iconName = 'warning';
-
-          return <Ionicons name={iconName} size={size} color={color} />;
-        },
-      })}
+    <AdminStack.Navigator
+      initialRouteName="AdminDashboard"
+      screenOptions={{ headerTitleAlign: 'center' }}
     >
-      <Tab.Screen
-        name="Dashboard"
+      <AdminStack.Screen
+        name="AdminDashboard"
         component={AdminDashboard}
-        options={{ title: 'Inicio' }}
+        options={{ title: 'Panel administrador' }}
       />
-      <Tab.Screen
+      <AdminStack.Screen
         name="AdminParticipantes"
         component={AdminParticipantes}
         options={{ title: 'Participantes' }}
       />
-      <Tab.Screen
-        name="AdminReservas"
-        component={AdminReservas}
-        options={{ title: 'Reservas' }}
-      />
-      <Tab.Screen
+      <AdminStack.Screen
         name="AdminSalas"
         component={AdminSalas}
         options={{ title: 'Salas' }}
       />
-      <Tab.Screen
+      <AdminStack.Screen
+        name="AdminReservas"
+        component={AdminReservas}
+        options={{ title: 'Reservas' }}
+      />
+      <AdminStack.Screen
+        name="AdminEstadisticas"
+        component={AdminEstadisticas}
+        options={{ title: 'Estadísticas' }}
+      />
+      <AdminStack.Screen
         name="AdminSanciones"
         component={AdminSanciones}
         options={{ title: 'Sanciones' }}
       />
-    </Tab.Navigator>
+      <AdminStack.Screen
+        name="AdminCrearParticipante"
+        component={CrearParticipanteAdmin}
+        options={{ title: 'Nuevo participante' }}
+      />
+      <AdminStack.Screen
+        name="AdminCrearReserva"
+        component={CrearReservaAdmin}
+        options={{ title: 'Nueva reserva' }}
+      />
+      <AdminStack.Screen
+        name="AdminCrearSala"
+        component={CrearSalaAdmin}
+        options={{ title: 'Nueva sala' }}
+      />
+      <AdminStack.Screen
+        name="AdminCrearSancion"
+        component={CrearSancionAdmin}
+        options={{ title: 'Nueva sanción' }}
+      />
+    </AdminStack.Navigator>
   );
 }
 
 export default function App() {
   return (
     <NavigationContainer>
-      <Stack.Navigator screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="Login" component={Login} />
-        <Stack.Screen name="UserTabs" component={UserTabs} />
-        <Stack.Screen name="AdminTabs" component={AdminTabs} />
-
-        {/* Formularios de alta admin */}
+      <Stack.Navigator
+        initialRouteName="Login"
+        screenOptions={{ headerTitleAlign: 'center' }}
+      >
         <Stack.Screen
-          name="AdminCrearParticipante"
-          component={CrearParticipanteAdmin}
-          options={{ headerShown: true, title: 'Nuevo participante' }}
+          name="Login"
+          component={Login}
+          options={{ headerShown: false }}
         />
         <Stack.Screen
-          name="AdminCrearSala"
-          component={CrearSalaAdmin}
-          options={{ headerShown: true, title: 'Nueva sala' }}
+          name="UserTabs"
+          component={UserTabs}
+          options={{ headerShown: false }}
         />
         <Stack.Screen
-          name="AdminCrearReserva"
-          component={CrearReservaAdmin}
-          options={{ headerShown: true, title: 'Nueva reserva (admin)' }}
-        />
-        <Stack.Screen
-          name="AdminCrearSancion"
-          component={CrearSancionAdmin}
-          options={{ headerShown: true, title: 'Nueva sanción' }}
+          name="AdminTabs"
+          component={AdminTabs}
+          options={{ headerShown: false }}
         />
       </Stack.Navigator>
     </NavigationContainer>

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -7,18 +7,13 @@ import {
   ScrollView,
   Platform,
   TextInput,
+  ActivityIndicator,
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Picker } from '@react-native-picker/picker';
+import { obtenerSalas, crearReserva, getUsuarioActual } from '../api';
 
-const SALAS = [
-  { id: '1', nombre: 'Sala 101 - Central', tipo: 'Uso libre', capacidad: 4 },
-  { id: '2', nombre: 'Sala 203 - Pereira', tipo: 'Exclusiva posgrado', capacidad: 6 },
-  { id: '3', nombre: 'Sala 005 - Biblioteca', tipo: 'Exclusiva docentes', capacidad: 3 },
-];
-
-// Horas de inicio válidas: de 08:00 a 22:00 (último bloque 22:00-23:00)
-const HORAS_INICIO = Array.from({ length: 15 }, (_, i) => 8 + i); // 8..22
+const HORAS_INICIO = Array.from({ length: 15 }, (_, i) => 8 + i);
 
 function formatDateForHtml(date) {
   const y = date.getFullYear();
@@ -38,15 +33,43 @@ function formatHourLabel(hour) {
 }
 
 export default function CrearReserva() {
+  const usuario = getUsuarioActual();
+  const ciResponsable = usuario ? usuario.ci : null;
+
   const [fecha, setFecha] = useState(new Date());
   const [showDatePicker, setShowDatePicker] = useState(false);
 
-  const [salaId, setSalaId] = useState(SALAS[0].id);
-  const [horaInicio, setHoraInicio] = useState(8); // 08:00
-  const [duracionHoras, setDuracionHoras] = useState(1); // 1 o 2 horas
+  const [salas, setSalas] = useState([]);
+  const [salaId, setSalaId] = useState(null);
+
+  const [horaInicio, setHoraInicio] = useState(8);
+  const [duracionHoras, setDuracionHoras] = useState(1);
 
   const [nuevoParticipanteCI, setNuevoParticipanteCI] = useState('');
-  const [participantes, setParticipantes] = useState([]); // lista de CIs (string)
+  const [participantes, setParticipantes] = useState([]);
+  const [cargandoSalas, setCargandoSalas] = useState(false);
+  const [enviando, setEnviando] = useState(false);
+
+  useEffect(() => {
+    async function cargarSalas() {
+      try {
+        setCargandoSalas(true);
+        const data = await obtenerSalas();
+        setSalas(data || []);
+        if (data && data.length > 0) {
+          const firstId = String(
+            data[0].id_sala || data[0].id || data[0].idSala
+          );
+          setSalaId(firstId);
+        }
+      } catch (e) {
+        alert('Error cargando salas: ' + e.message);
+      } finally {
+        setCargandoSalas(false);
+      }
+    }
+    cargarSalas();
+  }, []);
 
   const onChangeFecha = (event, selectedDate) => {
     if (Platform.OS === 'android' || Platform.OS === 'ios') {
@@ -57,16 +80,29 @@ export default function CrearReserva() {
     }
   };
 
-  const salaSeleccionada = SALAS.find((s) => s.id === salaId);
-  const capacidadSala = salaSeleccionada?.capacidad ?? 0;
+  const salaSeleccionada = salas.find((s) => {
+    const id = String(s.id_sala || s.id || s.idSala);
+    return id === String(salaId);
+  });
+
+  const capacidadSala = salaSeleccionada
+    ? Number(
+        salaSeleccionada.capacidad ||
+          salaSeleccionada.capacidad_maxima ||
+          salaSeleccionada.capacidadMaxima ||
+          0
+      )
+    : 0;
 
   const horaFinNum = horaInicio + duracionHoras;
-  const horaFinValida = horaFinNum <= 23; // no puede pasar de las 23:00
+  const horaFinValida = horaFinNum <= 23;
   const horaFinLabel = horaFinValida
     ? formatHourLabel(horaFinNum)
     : 'Fuera de horario (máx. 23:00)';
 
-  const totalParticipantes = participantes.length;
+  const totalParticipantes = ciResponsable
+    ? participantes.length + 1
+    : participantes.length;
   const excedeCapacidad =
     capacidadSala > 0 && totalParticipantes > capacidadSala;
 
@@ -76,12 +112,15 @@ export default function CrearReserva() {
       alert('Ingresá una cédula válida (solo números).');
       return;
     }
+    if (ciResponsable && ciLimpia === ciResponsable) {
+      alert('Esa cédula ya está incluida como responsable.');
+      return;
+    }
     if (participantes.includes(ciLimpia)) {
       alert('Ese participante ya está en la lista.');
       return;
     }
-    const nuevaLista = [...participantes, ciLimpia];
-    setParticipantes(nuevaLista);
+    setParticipantes([...participantes, ciLimpia]);
     setNuevoParticipanteCI('');
   };
 
@@ -89,7 +128,15 @@ export default function CrearReserva() {
     setParticipantes(participantes.filter((p) => p !== ci));
   };
 
-  const handleFakeSubmit = () => {
+  const handleSubmit = async () => {
+    if (!ciResponsable) {
+      alert('No hay usuario logueado. Volvé a la pantalla de inicio de sesión.');
+      return;
+    }
+    if (!salaSeleccionada || !salaId) {
+      alert('Seleccioná una sala.');
+      return;
+    }
     if (!horaFinValida) {
       alert('La reserva debe terminar como máximo a las 23:00.');
       return;
@@ -100,36 +147,44 @@ export default function CrearReserva() {
       );
       return;
     }
-    if (totalParticipantes === 0) {
-      alert(
-        'Agregá al menos un participante. Recordá incluirte a vos si vas a usar la sala.'
-      );
-      return;
-    }
 
-    alert(
-      `Reserva demo 🙂\n\nFecha: ${fecha.toLocaleDateString()}\nSala: ${
-        salaSeleccionada?.nombre
-      } (${salaSeleccionada?.tipo}) - Capacidad: ${capacidadSala}\nHora inicio: ${formatHourLabel(
-        horaInicio
-      )}\nDuración: ${duracionHoras} hora(s)\nHora fin: ${horaFinLabel}\n\nParticipantes (${totalParticipantes}):\n${participantes
-        .map((ci) => `• CI ${ci}`)
-        .join('\n')}\n\nMás adelante acá se registrará la asistencia de cada participante y se aplicarán las sanciones de 2 meses si nadie asiste.`
-    );
+    const fechaStr = fecha.toISOString().slice(0, 10);
+    const horaInicioLabel = formatHourLabel(horaInicio);
+
+    const payload = {
+      fecha: fechaStr,
+      id_sala: Number(salaId),
+      hora_inicio: horaInicioLabel,
+      duracion_horas: duracionHoras,
+      ci_responsable: ciResponsable,
+      participantes_ci: [
+        ciResponsable,
+        ...participantes,
+      ],
+    };
+
+    try {
+      setEnviando(true);
+      await crearReserva(payload);
+      alert('Reserva creada correctamente en la base de datos.');
+      setParticipantes([]);
+    } catch (e) {
+      alert('Error creando reserva: ' + e.message);
+    } finally {
+      setEnviando(false);
+    }
   };
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 24 }}>
       <Text style={styles.title}>Nueva reserva</Text>
       <Text style={styles.subtitle}>
-        Turnos de 1 hora entre 08:00 y 23:00. Máximo 2 horas seguidas y la
+        Turnos de 1 hora entre 08:00 y 23:00. Máximo 2 horas seguidas. La
         cantidad de participantes no puede superar la capacidad de la sala.
       </Text>
 
-      {/* Fecha */}
       <View style={styles.field}>
         <Text style={styles.label}>Fecha</Text>
-
         {Platform.OS === 'web' ? (
           <input
             type="date"
@@ -159,29 +214,41 @@ export default function CrearReserva() {
         )}
       </View>
 
-      {/* Sala */}
       <View style={styles.field}>
         <Text style={styles.label}>Sala</Text>
-        <View style={styles.pickerContainer}>
-          <Picker
-            selectedValue={salaId}
-            onValueChange={(itemValue) => setSalaId(itemValue)}
-          >
-            {SALAS.map((sala) => (
-              <Picker.Item
-                key={sala.id}
-                label={`${sala.nombre} (${sala.tipo}) - Capacidad ${sala.capacidad}`}
-                value={sala.id}
-              />
-            ))}
-          </Picker>
-        </View>
+        {cargandoSalas ? (
+          <ActivityIndicator />
+        ) : (
+          <View style={styles.pickerContainer}>
+            <Picker
+              selectedValue={salaId}
+              onValueChange={(itemValue) => setSalaId(itemValue)}
+            >
+              {salas.map((s) => {
+                const id = String(s.id_sala || s.id || s.idSala);
+                const nombre = s.nombre_sala || s.nombre || s.nombreSala;
+                const tipo = s.tipo || s.tipo_sala || '';
+                const cap =
+                  s.capacidad ||
+                  s.capacidad_maxima ||
+                  s.capacidadMaxima ||
+                  '';
+                return (
+                  <Picker.Item
+                    key={id}
+                    label={`${nombre} (${tipo}) - Capacidad ${cap}`}
+                    value={id}
+                  />
+                );
+              })}
+            </Picker>
+          </View>
+        )}
         <Text style={styles.helperText}>
           Capacidad actual de la sala: {capacidadSala} participante(s).
         </Text>
       </View>
 
-      {/* Hora inicio */}
       <View style={styles.field}>
         <Text style={styles.label}>Hora de inicio (bloques de 1 hora)</Text>
         <View style={styles.pickerContainer}>
@@ -196,7 +263,6 @@ export default function CrearReserva() {
         </View>
       </View>
 
-      {/* Duración */}
       <View style={styles.field}>
         <Text style={styles.label}>Duración</Text>
         <View style={styles.pickerContainer}>
@@ -213,7 +279,6 @@ export default function CrearReserva() {
         </Text>
       </View>
 
-      {/* Hora fin */}
       <View style={styles.field}>
         <Text style={styles.label}>Hora de fin estimada</Text>
         <View
@@ -239,7 +304,6 @@ export default function CrearReserva() {
         )}
       </View>
 
-      {/* Participantes */}
       <View style={styles.field}>
         <Text style={styles.label}>Participantes (alumnos y/o docentes)</Text>
         <TextInput
@@ -272,6 +336,14 @@ export default function CrearReserva() {
           )}
         </View>
 
+        {ciResponsable && (
+          <View style={styles.participantRow}>
+            <Text style={styles.participantText}>
+              CI {ciResponsable} (responsable)
+            </Text>
+          </View>
+        )}
+
         {participantes.map((ci) => (
           <View key={ci} style={styles.participantRow}>
             <Text style={styles.participantText}>CI {ci}</Text>
@@ -286,13 +358,20 @@ export default function CrearReserva() {
 
         <Text style={styles.helperText}>
           Más adelante se registrará la asistencia de cada participante. Si
-          ninguno se presenta en el día y horario de la reserva, el sistema
-          aplicará una sanción de 2 meses sin poder realizar reservas.
+          ninguno se presenta, se aplicará la sanción correspondiente.
         </Text>
       </View>
 
-      <TouchableOpacity style={styles.primaryButton} onPress={handleFakeSubmit}>
-        <Text style={styles.primaryButtonText}>Guardar reserva (demo)</Text>
+      <TouchableOpacity
+        style={styles.primaryButton}
+        onPress={handleSubmit}
+        disabled={enviando}
+      >
+        {enviando ? (
+          <ActivityIndicator color="#f9fafb" />
+        ) : (
+          <Text style={styles.primaryButtonText}>Guardar reserva</Text>
+        )}
       </TouchableOpacity>
     </ScrollView>
   );

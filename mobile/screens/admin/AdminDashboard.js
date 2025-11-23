@@ -1,9 +1,18 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { clearUsuarioActual } from '../../api';
 
 export default function AdminDashboard({ navigation }) {
   const go = (screen) => navigation.navigate(screen);
+
+  const handleLogout = () => {
+    clearUsuarioActual();
+    navigation.reset({
+      index: 0,
+      routes: [{ name: 'Login' }],
+    });
+  };
 
   return (
     <View style={styles.container}>
@@ -36,7 +45,18 @@ export default function AdminDashboard({ navigation }) {
           <Text style={styles.cardTitle}>Sanciones</Text>
           <Text style={styles.cardText}>Bloqueos por no asistencia.</Text>
         </TouchableOpacity>
+
+        {/* NUEVA CARD: Estadísticas */}
+        <TouchableOpacity style={styles.card} onPress={() => go('AdminEstadisticas')}>
+          <Ionicons name="stats-chart" size={30} color="#4f46e5" />
+          <Text style={styles.cardTitle}>Estadísticas</Text>
+          <Text style={styles.cardText}>Consultas del obligatorio.</Text>
+        </TouchableOpacity>
       </View>
+
+      <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+        <Text style={styles.logoutText}>Cerrar sesión</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -80,5 +100,20 @@ const styles = StyleSheet.create({
     marginTop: 4,
     fontSize: 12,
     color: '#6b7280',
+  },
+  logoutButton: {
+    marginTop: 20,
+    alignSelf: 'flex-start',
+    paddingVertical: 8,
+    paddingHorizontal: 18,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    backgroundColor: '#fee2e2',
+  },
+  logoutText: {
+    color: '#b91c1c',
+    fontWeight: '600',
+    fontSize: 13,
   },
 });

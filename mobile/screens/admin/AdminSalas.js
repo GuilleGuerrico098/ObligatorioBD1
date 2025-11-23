@@ -1,20 +1,59 @@
-import React from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   FlatList,
+  ActivityIndicator,
+  Alert,
 } from 'react-native';
-
-const MOCK_SALAS = [
-  { id: '1', nombre: 'Sala 101', edificio: 'Central', capacidad: 6, tipo: 'Uso libre' },
-  { id: '2', nombre: 'Sala 203', edificio: 'Pereira', capacidad: 8, tipo: 'Posgrado' },
-];
+import { useFocusEffect } from '@react-navigation/native';
+import { listarSalas } from '../../api';
 
 export default function AdminSalas({ navigation }) {
-  const handleFakeAction = (accion) => {
-    alert(`Interfaz de ${accion}.\nDespués se conecta con el backend.`);
+  const [salas, setSalas] = useState([]);
+  const [cargando, setCargando] = useState(true);
+
+  const cargar = async () => {
+    try {
+      setCargando(true);
+      const data = await listarSalas();
+
+      const formateadas = data.map((s) => ({
+        id: String(s.id_sala),
+        nombre: s.nombre_sala,
+        edificio: s.nombre_edificio,
+        capacidad: s.capacidad,
+        tipo:
+          s.tipo === 'uso_libre'
+            ? 'Uso libre'
+            : s.tipo === 'exclusiva_posgrado'
+            ? 'Posgrado'
+            : s.tipo === 'exclusiva_docente'
+            ? 'Docentes'
+            : s.tipo,
+      }));
+
+      setSalas(formateadas);
+    } catch (e) {
+      Alert.alert('Error', e.message);
+    } finally {
+      setCargando(false);
+    }
+  };
+
+  useFocusEffect(
+    useCallback(() => {
+      cargar();
+    }, [])
+  );
+
+  const handleFakeAction = (accion, item) => {
+    Alert.alert(
+      `Interfaz de ${accion}`,
+      `Sala: ${item.nombre}\nDespués se conecta con el backend.`
+    );
   };
 
   const renderItem = ({ item }) => (
@@ -26,19 +65,42 @@ export default function AdminSalas({ navigation }) {
       <View style={styles.actions}>
         <TouchableOpacity
           style={[styles.btn, styles.btnEdit]}
-          onPress={() => handleFakeAction('modificación')}
+          onPress={() => handleFakeAction('modificación', item)}
         >
           <Text style={styles.btnText}>Editar</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.btn, styles.btnDelete]}
-          onPress={() => handleFakeAction('baja')}
+          onPress={() => handleFakeAction('baja', item)}
         >
           <Text style={styles.btnText}>Eliminar</Text>
         </TouchableOpacity>
       </View>
     </View>
   );
+
+  if (cargando) {
+    return (
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color="#dc2626" />
+      </View>
+    );
+  }
+
+  if (salas.length === 0) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.title}>ABM de salas</Text>
+        <Text style={styles.subtitle}>No hay salas registradas.</Text>
+        <TouchableOpacity
+          style={styles.primaryButton}
+          onPress={() => navigation.navigate('AdminCrearSala')}
+        >
+          <Text style={styles.primaryButtonText}>+ Nueva sala</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -55,7 +117,7 @@ export default function AdminSalas({ navigation }) {
       </TouchableOpacity>
 
       <FlatList
-        data={MOCK_SALAS}
+        data={salas}
         keyExtractor={(item) => item.id}
         renderItem={renderItem}
         ItemSeparatorComponent={() => <View style={{ height: 8 }} />}

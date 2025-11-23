@@ -6,26 +6,83 @@ import {
   TextInput,
   TouchableOpacity,
   ScrollView,
+  Alert,
 } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
+import { crearSala } from '../../api';
 
 const EDIFICIOS = ['Central', 'Pereira', 'Biblioteca', 'Laboratorios'];
 
-export default function CrearSalaAdmin() {
+export default function CrearSalaAdmin({ navigation }) {
   const [nombre, setNombre] = useState('');
   const [edificio, setEdificio] = useState(EDIFICIOS[0]);
+  const [piso, setPiso] = useState('');
   const [capacidad, setCapacidad] = useState('');
   const [tipo, setTipo] = useState('Uso libre');
+  const [guardando, setGuardando] = useState(false);
 
   const handleChangeCapacidad = (texto) => {
     const soloNumeros = texto.replace(/\D/g, '');
     setCapacidad(soloNumeros);
   };
 
-  const handleSubmit = () => {
-    alert(
-      `Demo alta sala\n\nNombre: ${nombre}\nEdificio: ${edificio}\nCapacidad: ${capacidad}\nTipo: ${tipo}`
-    );
+  const handleChangePiso = (texto) => {
+    const soloNumeros = texto.replace(/\D/g, '');
+    setPiso(soloNumeros);
+  };
+
+  const mapTipoBackend = (t) => {
+    if (t === 'Uso libre') return 'uso_libre';
+    if (t === 'Posgrado') return 'exclusiva_posgrado';
+    if (t === 'Docentes') return 'exclusiva_docente';
+    return 'uso_libre';
+  };
+
+  const handleSubmit = async () => {
+    if (!nombre || !edificio || !piso || !capacidad || !tipo) {
+      Alert.alert('Error', 'Completá todos los campos.');
+      return;
+    }
+
+    const pisoNum = parseInt(piso, 10);
+    const capNum = parseInt(capacidad, 10);
+
+    if (isNaN(pisoNum) || pisoNum <= 0) {
+      Alert.alert('Error', 'Ingresá un piso válido.');
+      return;
+    }
+
+    if (isNaN(capNum) || capNum <= 0) {
+      Alert.alert('Error', 'Ingresá una capacidad válida.');
+      return;
+    }
+
+    const tipoBackend = mapTipoBackend(tipo);
+
+    const payload = {
+      nombre_sala: nombre,
+      nombre_edificio: edificio,
+      piso: pisoNum,
+      capacidad: capNum,
+      tipo: tipoBackend,
+    };
+
+    try {
+      setGuardando(true);
+      await crearSala(payload);
+      Alert.alert('Éxito', 'Sala creada correctamente.', [
+        {
+          text: 'OK',
+          onPress: () => {
+            navigation.navigate('AdminDashboard');
+          },
+        },
+      ]);
+    } catch (e) {
+      Alert.alert('Error', e.message);
+    } finally {
+      setGuardando(false);
+    }
   };
 
   return (
@@ -48,12 +105,23 @@ export default function CrearSalaAdmin() {
       <View style={styles.field}>
         <Text style={styles.label}>Edificio</Text>
         <View style={styles.pickerContainer}>
-          <Picker selectedValue={edificio} onValueChange={(v) => setEdificio(v)}>
+          <Picker selectedValue={edificio} onValueChange={setEdificio}>
             {EDIFICIOS.map((ed) => (
               <Picker.Item key={ed} label={ed} value={ed} />
             ))}
           </Picker>
         </View>
+      </View>
+
+      <View style={styles.field}>
+        <Text style={styles.label}>Piso</Text>
+        <TextInput
+          style={styles.input}
+          value={piso}
+          onChangeText={handleChangePiso}
+          keyboardType="numeric"
+          placeholder="Ej: 1"
+        />
       </View>
 
       <View style={styles.field}>
@@ -70,17 +138,18 @@ export default function CrearSalaAdmin() {
       <View style={styles.field}>
         <Text style={styles.label}>Tipo</Text>
         <View style={styles.pickerContainer}>
-          <Picker selectedValue={tipo} onValueChange={(v) => setTipo(v)}>
+          <Picker selectedValue={tipo} onValueChange={setTipo}>
             <Picker.Item label="Uso libre" value="Uso libre" />
             <Picker.Item label="Posgrado" value="Posgrado" />
             <Picker.Item label="Docentes" value="Docentes" />
-            <Picker.Item label="Reservada" value="Reservada" />
           </Picker>
         </View>
       </View>
 
-      <TouchableOpacity style={styles.primaryButton} onPress={handleSubmit}>
-        <Text style={styles.primaryButtonText}>Guardar sala (demo)</Text>
+      <TouchableOpacity style={styles.primaryButton} onPress={handleSubmit} disabled={guardando}>
+        <Text style={styles.primaryButtonText}>
+          {guardando ? 'Guardando...' : 'Guardar sala'}
+        </Text>
       </TouchableOpacity>
     </ScrollView>
   );

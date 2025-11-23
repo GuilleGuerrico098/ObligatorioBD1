@@ -2,14 +2,18 @@ DROP DATABASE IF EXISTS salas_estudio;
 CREATE DATABASE salas_estudio;
 USE salas_estudio;
 
--- FACULTAD
+-- ============================
+--          FACULTAD
+-- ============================
 CREATE TABLE facultad (
     id_facultad INT AUTO_INCREMENT,
     nombre VARCHAR(100) NOT NULL UNIQUE,
     PRIMARY KEY (id_facultad)
 );
 
--- EDIFICIO
+-- ============================
+--          EDIFICIO
+-- ============================
 CREATE TABLE edificio (
     nombre_edificio VARCHAR(100),
     direccion VARCHAR(150) NOT NULL,
@@ -17,7 +21,9 @@ CREATE TABLE edificio (
     PRIMARY KEY (nombre_edificio)
 );
 
--- PARTICIPANTE (ahora incluye tipo)
+-- ============================
+--         PARTICIPANTE
+-- ============================
 CREATE TABLE participante (
     ci VARCHAR(15),
     nombre VARCHAR(100) NOT NULL,
@@ -27,7 +33,9 @@ CREATE TABLE participante (
     PRIMARY KEY (ci)
 );
 
--- PROGRAMA ACADÉMICO
+-- ============================
+--     PROGRAMA ACADÉMICO
+-- ============================
 CREATE TABLE programa_academico (
     nombre_programa VARCHAR(100),
     id_facultad INT NOT NULL,
@@ -36,7 +44,9 @@ CREATE TABLE programa_academico (
     FOREIGN KEY (id_facultad) REFERENCES facultad(id_facultad)
 );
 
--- RELACIÓN PARTICIPANTE - PROGRAMA
+-- ============================
+-- REL PARTICIPANTE - PROGRAMA
+-- ============================
 CREATE TABLE participante_programa_academico (
     ci VARCHAR(15),
     nombre_programa VARCHAR(100),
@@ -45,7 +55,9 @@ CREATE TABLE participante_programa_academico (
     FOREIGN KEY (nombre_programa) REFERENCES programa_academico(nombre_programa)
 );
 
--- LOGIN
+-- ============================
+--       LOGIN / SESIÓN
+-- ============================
 CREATE TABLE login (
     correo VARCHAR(150),
     contrasena VARCHAR(255) NOT NULL,
@@ -53,7 +65,9 @@ CREATE TABLE login (
     FOREIGN KEY (correo) REFERENCES participante(email)
 );
 
--- SALA (agregamos tipo de sala)
+-- ============================
+--            SALA
+-- ============================
 CREATE TABLE sala (
     id_sala INT AUTO_INCREMENT,
     nombre_sala VARCHAR(100) NOT NULL,
@@ -64,12 +78,17 @@ CREATE TABLE sala (
     tiene_pc TINYINT(1) NOT NULL DEFAULT 0,
     es_silenciosa TINYINT(1) NOT NULL DEFAULT 0,
     tipo ENUM('uso_libre','exclusiva_posgrado','exclusiva_docente') 
-        NOT NULL DEFAULT 'uso_libre',
+         NOT NULL DEFAULT 'uso_libre',
     PRIMARY KEY (id_sala),
     FOREIGN KEY (nombre_edificio) REFERENCES edificio(nombre_edificio)
 );
 
--- TURNOS
+-- ============================
+--           TURNO
+-- ============================
+-- Nota: NO se usan para bloques fijos.
+-- Pero el modelo oficial del obligatorio los menciona.
+-- Servirán como referencia para auditorías o consultas.
 CREATE TABLE turno (
     id_turno INT AUTO_INCREMENT,
     hora_inicio TIME NOT NULL,
@@ -78,32 +97,40 @@ CREATE TABLE turno (
     PRIMARY KEY (id_turno)
 );
 
--- RESERVA
+-- ============================
+--           RESERVA
+-- ============================
 CREATE TABLE reserva (
     id_reserva INT AUTO_INCREMENT,
     fecha DATE NOT NULL,
     id_sala INT NOT NULL,
-    id_turno INT NOT NULL,
+    hora_inicio TIME NOT NULL,
+    hora_fin TIME NOT NULL,
     ci_responsable VARCHAR(15) NOT NULL,
-    estado ENUM('activa','cancelada','finalizada') NOT NULL DEFAULT 'activa',
+    estado ENUM('activa','cancelada','finalizada','sin_asistencia')
+        NOT NULL DEFAULT 'activa',
     PRIMARY KEY (id_reserva),
     FOREIGN KEY (id_sala) REFERENCES sala(id_sala),
-    FOREIGN KEY (id_turno) REFERENCES turno(id_turno),
     FOREIGN KEY (ci_responsable) REFERENCES participante(ci)
 );
 
--- PARTICIPANTES DE LA RESERVA (agregado asistio)
+-- ============================
+--   PARTICIPANTES POR RESERVA
+-- ============================
 CREATE TABLE reserva_participante (
     id_reserva INT,
     ci VARCHAR(15),
     es_responsable TINYINT(1) NOT NULL DEFAULT 0,
-    asistio TINYINT(1) NOT NULL DEFAULT 0,
+    asistio ENUM('pendiente','asistio','no_asistio') 
+        NOT NULL DEFAULT 'pendiente',
     PRIMARY KEY (id_reserva, ci),
     FOREIGN KEY (id_reserva) REFERENCES reserva(id_reserva),
     FOREIGN KEY (ci) REFERENCES participante(ci)
 );
 
--- SANCIONES
+-- ============================
+--          SANCIONES
+-- ============================
 CREATE TABLE sancion_participante (
     id_sancion INT AUTO_INCREMENT,
     ci VARCHAR(15) NOT NULL,

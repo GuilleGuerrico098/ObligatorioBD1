@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -6,23 +6,12 @@ import {
   TouchableOpacity,
   ScrollView,
   Platform,
+  Alert,
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Picker } from '@react-native-picker/picker';
+import { listarSalas, listarParticipantes, crearReserva } from '../../api';
 
-const SALAS = [
-  { id: '1', nombre: 'Sala 101 - Central', tipo: 'Uso libre', capacidad: 4 },
-  { id: '2', nombre: 'Sala 203 - Pereira', tipo: 'Exclusiva de posgrado', capacidad: 6 },
-  { id: '3', nombre: 'Sala 005 - Biblioteca', tipo: 'Exclusiva de docentes', capacidad: 3 },
-];
-
-const PARTICIPANTES = [
-  { id: '41234567', nombre: 'Juan Pérez', tipo: 'Estudiante de grado' },
-  { id: '59876543', nombre: 'María García', tipo: 'Docente' },
-  { id: '43322119', nombre: 'Ana López', tipo: 'Estudiante de posgrado' },
-];
-
-// Horas de inicio válidas: de 08:00 a 22:00
 const HORAS_INICIO = Array.from({ length: 15 }, (_, i) => 8 + i);
 
 function formatDateForHtml(date) {
@@ -42,21 +31,46 @@ function formatHourLabel(hour) {
   return `${String(hour).padStart(2, '0')}:00`;
 }
 
-export default function CrearReservaAdmin() {
+export default function CrearReservaAdmin({ navigation }) {
   const [fecha, setFecha] = useState(new Date());
   const [showDatePicker, setShowDatePicker] = useState(false);
 
-  const [salaId, setSalaId] = useState(SALAS[0].id);
+  const [salas, setSalas] = useState([]);
+  const [salaId, setSalaId] = useState(null);
+
+  const [participantesSistema, setParticipantesSistema] = useState([]);
+  const [participanteSeleccionado, setParticipanteSeleccionado] = useState(null);
+
   const [horaInicio, setHoraInicio] = useState(8);
   const [duracionHoras, setDuracionHoras] = useState(1);
 
-  const [participanteSeleccionadoId, setParticipanteSeleccionadoId] = useState(
-    PARTICIPANTES[0].id
-  );
-  const [participantesReserva, setParticipantesReserva] = useState([]); // lista de ids
+  const [participantesReserva, setParticipantesReserva] = useState([]);
+  const [guardando, setGuardando] = useState(false);
+
+  useEffect(() => {
+    async function cargar() {
+      try {
+        const dataSalas = await listarSalas();
+        setSalas(dataSalas);
+        if (dataSalas.length > 0) {
+          setSalaId(String(dataSalas[0].id_sala));
+        }
+
+        const dataPart = await listarParticipantes();
+        setParticipantesSistema(dataPart);
+        if (dataPart.length > 0) {
+          setParticipanteSeleccionado(dataPart[0].ci);
+        }
+      } catch (e) {
+        Alert.alert("Error", e.message);
+      }
+    }
+
+    cargar();
+  }, []);
 
   const onChangeFecha = (event, selectedDate) => {
-    if (Platform.OS === 'android' || Platform.OS === 'ios') {
+    if (Platform.OS !== 'web') {
       setShowDatePicker(false);
     }
     if (selectedDate) {
@@ -64,12 +78,11 @@ export default function CrearReservaAdmin() {
     }
   };
 
-  const sala = SALAS.find((s) => s.id === salaId);
+  const sala = salas.find((s) => String(s.id_sala) === String(salaId));
   const capacidadSala = sala?.capacidad ?? 0;
 
   const horaFinNum = horaInicio + duracionHoras;
   const horaFinValida = horaFinNum <= 23;
-
   const horaFinLabel = horaFinValida
     ? formatHourLabel(horaFinNum)
     : 'Fuera de horario (máx. 23:00)';
@@ -79,60 +92,76 @@ export default function CrearReservaAdmin() {
     capacidadSala > 0 && totalParticipantes > capacidadSala;
 
   const handleAgregarParticipante = () => {
-    if (participantesReserva.includes(participanteSeleccionadoId)) {
-      alert('Ese participante ya está agregado a la reserva.');
+    if (!participanteSeleccionado) return;
+
+    if (participantesReserva.includes(participanteSeleccionado)) {
+      Alert.alert("Error", "Ese participante ya está en la lista.");
       return;
     }
-    setParticipantesReserva([...participantesReserva, participanteSeleccionadoId]);
+
+    setParticipantesReserva([...participantesReserva, participanteSeleccionado]);
   };
 
-  const handleEliminarParticipante = (id) => {
+  const handleEliminarParticipante = (ci) => {
     setParticipantesReserva(
-      participantesReserva.filter((pId) => pId !== id)
+      participantesReserva.filter((p) => p !== ci)
     );
   };
 
-  const handleSubmit = () => {
+  async function handleSubmit() {
     if (!horaFinValida) {
-      alert('La reserva debe terminar como máximo a las 23:00.');
+      Alert.alert("Error", "La reserva debe terminar antes de las 23:00.");
       return;
     }
+
     if (excedeCapacidad) {
-      alert(
-        `La cantidad de participantes (${totalParticipantes}) supera la capacidad de la sala (${capacidadSala}).`
+      Alert.alert(
+        "Error",
+        `La sala soporta ${capacidadSala} personas y estás agregando ${totalParticipantes}.`
       );
       return;
     }
+
     if (totalParticipantes === 0) {
-      alert('Agregá al menos un participante a la reserva.');
+      Alert.alert("Error", "Agrega al menos un participante.");
       return;
     }
 
-    const participantesTexto = participantesReserva
-      .map((id) => {
-        const p = PARTICIPANTES.find((x) => x.id === id);
-        return p ? `• ${p.nombre} - CI ${p.id} (${p.tipo})` : '';
-      })
-      .join('\n');
+    const fechaStr = fecha.toISOString().slice(0, 10);
+    const horaStr = `${String(horaInicio).padStart(2, '0')}:00`;
 
-    alert(
-      `Reserva demo (admin)\n\nFecha: ${fecha.toLocaleDateString()}\nSala: ${
-        sala?.nombre
-      } (${sala?.tipo}) - Capacidad ${capacidadSala}\nHora inicio: ${formatHourLabel(
-        horaInicio
-      )}\nDuración: ${duracionHoras} hora(s)\nHora fin: ${horaFinLabel}\n\nParticipantes (${totalParticipantes}):\n${participantesTexto}\n\nMás adelante este formulario va a crear la reserva real, registrar asistencia de cada participante y, si nadie asiste, aplicar automáticamente la sanción de 2 meses.`
-    );
-  };
+    const payload = {
+      fecha: fechaStr,
+      id_sala: parseInt(salaId, 10),
+      hora_inicio: horaStr,
+      duracion_horas: duracionHoras,
+      ci_responsable: participantesReserva[0],
+      participantes_ci: participantesReserva,
+    };
+
+    try {
+      setGuardando(true);
+      await crearReserva(payload);
+      Alert.alert("Éxito", "Reserva creada correctamente.", [
+        {
+          text: "OK",
+          onPress: () => navigation.navigate('AdminDashboard'),
+        },
+      ]);
+    } catch (e) {
+      Alert.alert("Error", e.message);
+    } finally {
+      setGuardando(false);
+    }
+  }
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 24 }}>
       <Text style={styles.title}>Nueva reserva (admin)</Text>
       <Text style={styles.subtitle}>
-        Turnos de 1 hora entre 08:00 y 23:00. Máximo 2 horas seguidas. La
-        cantidad de participantes no puede superar la capacidad de la sala.
+        Turnos de 1 hora entre 08:00 y 23:00. Máximo 2 horas seguidas. 
       </Text>
 
-      {/* Fecha */}
       <View style={styles.field}>
         <Text style={styles.label}>Fecha</Text>
 
@@ -149,15 +178,14 @@ export default function CrearReservaAdmin() {
               style={styles.inputButton}
               onPress={() => setShowDatePicker(true)}
             >
-              <Text style={styles.inputButtonText}>
-                {fecha.toLocaleDateString()}
-              </Text>
+              <Text style={styles.inputButtonText}>{fecha.toLocaleDateString()}</Text>
             </TouchableOpacity>
+
             {showDatePicker && (
               <DateTimePicker
                 value={fecha}
                 mode="date"
-                display={Platform.OS === 'ios' ? 'spinner' : 'calendar'}
+                display="calendar"
                 onChange={onChangeFecha}
               />
             )}
@@ -165,33 +193,28 @@ export default function CrearReservaAdmin() {
         )}
       </View>
 
-      {/* Sala */}
       <View style={styles.field}>
         <Text style={styles.label}>Sala</Text>
         <View style={styles.pickerContainer}>
-          <Picker selectedValue={salaId} onValueChange={(v) => setSalaId(v)}>
-            {SALAS.map((s) => (
+          <Picker selectedValue={salaId} onValueChange={setSalaId}>
+            {salas.map((s) => (
               <Picker.Item
-                key={s.id}
-                label={`${s.nombre} (${s.tipo}) - Capacidad ${s.capacidad}`}
-                value={s.id}
+                key={s.id_sala}
+                label={`${s.nombre_sala} (${s.tipo}) - Capacidad ${s.capacidad}`}
+                value={String(s.id_sala)}
               />
             ))}
           </Picker>
         </View>
         <Text style={styles.helperText}>
-          Capacidad actual de la sala: {capacidadSala} participante(s).
+          Capacidad de la sala: {capacidadSala}
         </Text>
       </View>
 
-      {/* Hora inicio */}
       <View style={styles.field}>
-        <Text style={styles.label}>Hora de inicio (bloques de 1 hora)</Text>
+        <Text style={styles.label}>Hora de inicio</Text>
         <View style={styles.pickerContainer}>
-          <Picker
-            selectedValue={horaInicio}
-            onValueChange={(v) => setHoraInicio(v)}
-          >
+          <Picker selectedValue={horaInicio} onValueChange={setHoraInicio}>
             {HORAS_INICIO.map((h) => (
               <Picker.Item key={h} label={formatHourLabel(h)} value={h} />
             ))}
@@ -199,63 +222,39 @@ export default function CrearReservaAdmin() {
         </View>
       </View>
 
-      {/* Duración */}
       <View style={styles.field}>
         <Text style={styles.label}>Duración</Text>
         <View style={styles.pickerContainer}>
-          <Picker
-            selectedValue={duracionHoras}
-            onValueChange={(v) => setDuracionHoras(v)}
-          >
+          <Picker selectedValue={duracionHoras} onValueChange={setDuracionHoras}>
             <Picker.Item label="1 hora" value={1} />
             <Picker.Item label="2 horas" value={2} />
           </Picker>
         </View>
-        <Text style={styles.helperText}>
-          Para alumnos en salas de uso libre, luego validaremos también el
-          máximo de 2 horas diarias y 3 reservas activas por semana.
-        </Text>
       </View>
 
-      {/* Hora fin */}
       <View style={styles.field}>
-        <Text style={styles.label}>Hora de fin estimada</Text>
-        <View
-          style={[
-            styles.infoBox,
-            !horaFinValida && styles.infoBoxError,
-          ]}
-        >
-          <Text
-            style={[
-              styles.infoText,
-              !horaFinValida && styles.infoTextError,
-            ]}
-          >
+        <Text style={styles.label}>Hora fin estimada</Text>
+
+        <View style={[styles.infoBox, !horaFinValida && styles.infoBoxError]}>
+          <Text style={[styles.infoText, !horaFinValida && styles.infoTextError]}>
             {horaFinLabel}
           </Text>
         </View>
-        {!horaFinValida && (
-          <Text style={styles.errorText}>
-            Ajustá hora de inicio o duración para terminar como máximo a las
-            23:00.
-          </Text>
-        )}
       </View>
 
-      {/* Participantes */}
       <View style={styles.field}>
-        <Text style={styles.label}>Participantes (alumnos y/o docentes)</Text>
+        <Text style={styles.label}>Participantes</Text>
+
         <View style={styles.pickerContainer}>
           <Picker
-            selectedValue={participanteSeleccionadoId}
-            onValueChange={(v) => setParticipanteSeleccionadoId(v)}
+            selectedValue={participanteSeleccionado}
+            onValueChange={setParticipanteSeleccionado}
           >
-            {PARTICIPANTES.map((p) => (
+            {participantesSistema.map((p) => (
               <Picker.Item
-                key={p.id}
-                label={`${p.nombre} - CI ${p.id} (${p.tipo})`}
-                value={p.id}
+                key={p.ci}
+                label={`${p.nombre} ${p.apellido} - CI ${p.ci}`}
+                value={p.ci}
               />
             ))}
           </Picker>
@@ -268,50 +267,34 @@ export default function CrearReservaAdmin() {
           <Text style={styles.secondaryButtonText}>+ Agregar participante</Text>
         </TouchableOpacity>
 
-        <View style={styles.participantsInfo}>
-          <Text
-            style={[
-              styles.participantsCount,
-              excedeCapacidad && styles.participantsCountError,
-            ]}
-          >
-            Participantes: {totalParticipantes} / {capacidadSala}
-          </Text>
-          {excedeCapacidad && (
-            <Text style={styles.errorText}>
-              La cantidad de participantes supera la capacidad de la sala.
-            </Text>
-          )}
-        </View>
-
-        {participantesReserva.map((id) => {
-          const p = PARTICIPANTES.find((x) => x.id === id);
+        {participantesReserva.map((ci) => {
+          const p = participantesSistema.find((x) => x.ci === ci);
           if (!p) return null;
+
           return (
-            <View key={id} style={styles.participantRow}>
+            <View key={ci} style={styles.participantRow}>
               <Text style={styles.participantText}>
-                {p.nombre} - CI {p.id} ({p.tipo})
+                {p.nombre} {p.apellido} - CI {p.ci}
               </Text>
               <TouchableOpacity
                 style={styles.removeButton}
-                onPress={() => handleEliminarParticipante(id)}
+                onPress={() => handleEliminarParticipante(ci)}
               >
                 <Text style={styles.removeButtonText}>Quitar</Text>
               </TouchableOpacity>
             </View>
           );
         })}
-
-        <Text style={styles.helperText}>
-          Una vez creada la reserva, desde el panel de reservas se registrará la
-          asistencia de cada participante. Si ninguno asiste en el día y
-          horario, se notificará y se aplicará la sanción de 2 meses sin poder
-          reservar.
-        </Text>
       </View>
 
-      <TouchableOpacity style={styles.primaryButton} onPress={handleSubmit}>
-        <Text style={styles.primaryButtonText}>Guardar reserva (demo)</Text>
+      <TouchableOpacity
+        style={styles.primaryButton}
+        onPress={handleSubmit}
+        disabled={guardando}
+      >
+        <Text style={styles.primaryButtonText}>
+          {guardando ? 'Guardando...' : 'Guardar reserva'}
+        </Text>
       </TouchableOpacity>
     </ScrollView>
   );
@@ -354,6 +337,14 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#111827',
   },
+  htmlInput: {
+    width: '100%',
+    padding: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    fontSize: 14,
+  },
   pickerContainer: {
     backgroundColor: '#ffffff',
     borderRadius: 10,
@@ -382,27 +373,6 @@ const styles = StyleSheet.create({
   infoTextError: {
     color: '#b91c1c',
   },
-  primaryButton: {
-    marginTop: 16,
-    backgroundColor: '#dc2626',
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: 'center',
-  },
-  primaryButtonText: {
-    color: '#fef2f2',
-    fontWeight: '600',
-    fontSize: 15,
-  },
-  htmlInput: {
-    width: '100%',
-    padding: 10,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    fontSize: 14,
-    boxSizing: 'border-box',
-  },
   secondaryButton: {
     marginTop: 8,
     paddingVertical: 8,
@@ -415,17 +385,6 @@ const styles = StyleSheet.create({
     color: '#dc2626',
     fontWeight: '600',
     fontSize: 13,
-  },
-  participantsInfo: {
-    marginTop: 8,
-  },
-  participantsCount: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#111827',
-  },
-  participantsCountError: {
-    color: '#b91c1c',
   },
   participantRow: {
     marginTop: 6,
@@ -451,9 +410,16 @@ const styles = StyleSheet.create({
     color: '#b91c1c',
     fontWeight: '600',
   },
-  errorText: {
-    marginTop: 4,
-    fontSize: 11,
-    color: '#b91c1c',
+  primaryButton: {
+    backgroundColor: '#dc2626',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 16,
+  },
+  primaryButtonText: {
+    color: '#fef2f2',
+    fontWeight: '600',
+    fontSize: 15,
   },
 });

@@ -1,48 +1,48 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { clearUsuarioActual } from '../api';
 
 export default function HomeUser({ navigation }) {
+  const go = (screen) => navigation.navigate(screen);
+
+  const handleLogout = () => {
+    clearUsuarioActual();
+    navigation.reset({
+      index: 0,
+      routes: [{ name: 'Login' }],
+    });
+  };
+
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Hola 👋</Text>
-      <Text style={styles.subtitle}>
-        Desde acá podés gestionar tus reservas de salas de estudio.
-      </Text>
+      <Text style={styles.title}>Salas de Estudio UCU</Text>
+      <Text style={styles.subtitle}>Versión participante</Text>
 
-      <View style={styles.row}>
+      <View style={styles.card}>
         <TouchableOpacity
-          style={styles.card}
-          onPress={() => navigation.navigate('CrearReserva')}
+          style={styles.primaryButton}
+          onPress={() => go('CrearReserva')}
         >
-          <Ionicons name="add-circle" size={32} color="#2563eb" />
-          <Text style={styles.cardTitle}>Crear reserva</Text>
-          <Text style={styles.cardText}>
-            Elegí sala, día, turnos y participantes.
-          </Text>
+          <Text style={styles.primaryButtonText}>Crear reserva</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={styles.card}
-          onPress={() => navigation.navigate('MisReservas')}
+          style={styles.secondaryButton}
+          onPress={() => go('MisReservas')}
         >
-          <Ionicons name="calendar" size={32} color="#16a34a" />
-          <Text style={styles.cardTitle}>Mis reservas</Text>
-          <Text style={styles.cardText}>
-            Consultá tus reservas activas y pasadas.
-          </Text>
+          <Text style={styles.secondaryButtonText}>Ver mis reservas</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.secondaryButton}
+          onPress={() => go('Salas')}
+        >
+          <Text style={styles.secondaryButtonText}>Ver salas</Text>
         </TouchableOpacity>
       </View>
 
-      <TouchableOpacity
-        style={[styles.card, styles.fullWidthCard]}
-        onPress={() => navigation.navigate('Salas')}
-      >
-        <Ionicons name="business" size={32} color="#7c3aed" />
-        <Text style={styles.cardTitle}>Ver salas disponibles</Text>
-        <Text style={styles.cardText}>
-          Listado de salas por edificio, capacidad y tipo.
-        </Text>
+      <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+        <Text style={styles.logoutText}>Cerrar sesión</Text>
       </TouchableOpacity>
     </View>
   );
@@ -51,44 +51,66 @@ export default function HomeUser({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f1f5f9',
+    backgroundColor: '#0f172a',
     padding: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   title: {
     fontSize: 24,
     fontWeight: '700',
-    color: '#0f172a',
+    color: '#e5e7eb',
     marginBottom: 4,
+    textAlign: 'center',
   },
   subtitle: {
     fontSize: 14,
-    color: '#6b7280',
+    color: '#9ca3af',
     marginBottom: 20,
-  },
-  row: {
-    flexDirection: 'row',
-    gap: 12,
-    marginBottom: 12,
+    textAlign: 'center',
   },
   card: {
-    flex: 1,
-    backgroundColor: '#ffffff',
+    width: '100%',
+    backgroundColor: '#f9fafb',
     borderRadius: 16,
-    padding: 16,
-    elevation: 2,
+    padding: 20,
+    gap: 10,
   },
-  fullWidthCard: {
-    marginTop: 4,
+  primaryButton: {
+    backgroundColor: '#2563eb',
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
   },
-  cardTitle: {
-    marginTop: 12,
+  primaryButtonText: {
+    color: '#f9fafb',
     fontWeight: '600',
-    fontSize: 16,
-    color: '#111827',
+    fontSize: 15,
   },
-  cardText: {
-    marginTop: 4,
+  secondaryButton: {
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  secondaryButtonText: {
+    color: '#111827',
+    fontWeight: '500',
+    fontSize: 14,
+  },
+  logoutButton: {
+    marginTop: 18,
+    paddingVertical: 8,
+    paddingHorizontal: 18,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#fca5a5',
+    backgroundColor: '#fee2e2',
+  },
+  logoutText: {
+    color: '#b91c1c',
+    fontWeight: '600',
     fontSize: 13,
-    color: '#6b7280',
   },
 });

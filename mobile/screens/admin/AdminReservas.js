@@ -1,21 +1,52 @@
-import React from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   FlatList,
+  ActivityIndicator,
+  Alert,
 } from 'react-native';
-
-const MOCK_RESERVAS = [
-  { id: '1', sala: 'Sala 101', fecha: '2025-11-20', turno: '10:00-12:00', estado: 'Activa' },
-  { id: '2', sala: 'Sala 005', fecha: '2025-11-18', turno: '19:00-21:00', estado: 'Sin asistencia' },
-];
+import { useFocusEffect } from '@react-navigation/native';
+import { listarReservasAdmin } from '../../api';
 
 export default function AdminReservas({ navigation }) {
-  const handleFakeAction = (accion) => {
-    alert(`Interfaz de ${accion} de reserva.\nDespués conectamos con el backend.`);
+  const [reservas, setReservas] = useState([]);
+  const [cargando, setCargando] = useState(true);
+
+  const cargar = async () => {
+    try {
+      setCargando(true);
+
+      const data = await listarReservasAdmin();
+
+      const formateadas = data.map((r) => ({
+        id: String(r.id_reserva),
+        sala: r.nombre_sala,
+        fecha: r.fecha,
+        turno: `${r.hora_inicio.slice(0, 5)} - ${r.hora_fin.slice(0, 5)}`,
+        estado:
+          r.estado === 'activa'
+            ? 'Activa'
+            : r.estado === 'cancelada'
+            ? 'Cancelada'
+            : 'Finalizada',
+      }));
+
+      setReservas(formateadas);
+    } catch (e) {
+      Alert.alert('Error', e.message);
+    } finally {
+      setCargando(false);
+    }
   };
+
+  useFocusEffect(
+    useCallback(() => {
+      cargar();
+    }, [])
+  );
 
   const renderItem = ({ item }) => (
     <View style={styles.card}>
@@ -24,22 +55,45 @@ export default function AdminReservas({ navigation }) {
         {item.fecha} • {item.turno}
       </Text>
       <Text style={styles.line}>Estado: {item.estado}</Text>
+
       <View style={styles.actions}>
         <TouchableOpacity
           style={[styles.btn, styles.btnEdit]}
-          onPress={() => handleFakeAction('modificación')}
+          onPress={() =>
+            Alert.alert('Editar', `Función editar reserva #${item.id} (pendiente)`)
+          }
         >
           <Text style={styles.btnText}>Editar</Text>
         </TouchableOpacity>
+
         <TouchableOpacity
           style={[styles.btn, styles.btnDelete]}
-          onPress={() => handleFakeAction('baja')}
+          onPress={() =>
+            Alert.alert('Eliminar', `Función borrar reserva #${item.id} (pendiente)`)
+          }
         >
           <Text style={styles.btnText}>Eliminar</Text>
         </TouchableOpacity>
       </View>
     </View>
   );
+
+  if (cargando) {
+    return (
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color="#dc2626" />
+      </View>
+    );
+  }
+
+  if (reservas.length === 0) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.title}>ABM de reservas</Text>
+        <Text style={styles.subtitle}>No hay reservas registradas.</Text>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -56,7 +110,7 @@ export default function AdminReservas({ navigation }) {
       </TouchableOpacity>
 
       <FlatList
-        data={MOCK_RESERVAS}
+        data={reservas}
         keyExtractor={(item) => item.id}
         renderItem={renderItem}
         ItemSeparatorComponent={() => <View style={{ height: 8 }} />}

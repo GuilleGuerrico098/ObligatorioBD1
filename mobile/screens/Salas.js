@@ -1,36 +1,63 @@
-import React from 'react';
-import { View, Text, StyleSheet, FlatList } from 'react-native';
-
-const MOCK_SALAS = [
-  { id: '1', nombre: 'Sala 101', edificio: 'Central', capacidad: 6, tipo: 'Uso libre' },
-  { id: '2', nombre: 'Sala 203', edificio: 'Pereira', capacidad: 8, tipo: 'Exclusiva posgrado' },
-  { id: '3', nombre: 'Sala 005', edificio: 'Biblioteca', capacidad: 4, tipo: 'Exclusiva docentes' },
-];
+import React, { useEffect, useState } from 'react';
+import { View, Text, StyleSheet, FlatList, ActivityIndicator } from 'react-native';
+import { obtenerSalas } from '../api';
 
 export default function Salas() {
-  const renderItem = ({ item }) => (
-    <View style={styles.card}>
-      <Text style={styles.nombre}>{item.nombre}</Text>
-      <Text style={styles.line}>{item.edificio}</Text>
-      <Text style={styles.line}>Capacidad: {item.capacidad} personas</Text>
-      <Text style={styles.tipo}>{item.tipo}</Text>
-    </View>
-  );
+  const [salas, setSalas] = useState([]);
+  const [cargando, setCargando] = useState(false);
+
+  useEffect(() => {
+    async function cargar() {
+      try {
+        setCargando(true);
+        const data = await obtenerSalas();
+        setSalas(data || []);
+      } catch (e) {
+        alert('Error cargando salas: ' + e.message);
+      } finally {
+        setCargando(false);
+      }
+    }
+    cargar();
+  }, []);
+
+  const renderItem = ({ item }) => {
+    const nombre = item.nombre_sala || item.nombre || item.nombreSala || '';
+    const edificio = item.nombre_edificio || item.edificio || '';
+    const capacidad =
+      item.capacidad || item.capacidad_maxima || item.capacidadMaxima || '';
+    const tipo = item.tipo || item.tipo_sala || '';
+
+    return (
+      <View style={styles.card}>
+        <Text style={styles.nombre}>{nombre}</Text>
+        <Text style={styles.line}>{edificio}</Text>
+        <Text style={styles.line}>Capacidad: {capacidad} personas</Text>
+        <Text style={styles.tipo}>{tipo}</Text>
+      </View>
+    );
+  };
 
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Salas</Text>
       <Text style={styles.subtitle}>
-        Información de ejemplo de salas por edificio, tipo y capacidad.
+        Listado de salas cargado desde la base de datos.
       </Text>
 
-      <FlatList
-        data={MOCK_SALAS}
-        keyExtractor={(item) => item.id}
-        renderItem={renderItem}
-        ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
-        contentContainerStyle={{ paddingBottom: 24 }}
-      />
+      {cargando ? (
+        <ActivityIndicator />
+      ) : (
+        <FlatList
+          data={salas}
+          keyExtractor={(item, index) =>
+            String(item.id_sala || item.id || item.idSala || index)
+          }
+          renderItem={renderItem}
+          ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
+          contentContainerStyle={{ paddingBottom: 24 }}
+        />
+      )}
     </View>
   );
 }
