@@ -20,18 +20,15 @@ export default function Login() {
         contrasena,
       });
 
-      // Backend devuelve: { correo, nombre, ci, es_admin }
+
       if (!data || !data.correo) {
         throw new Error('Respuesta inesperada del servidor');
       }
 
-      // Guarda el usuario en el contexto
+
       login(data);
 
-      // Si tenés routing, acá podés redirigir según es_admin
-      // por ejemplo:
-      // if (data.es_admin) navigate('/admin');
-      // else navigate('/alumno');
+
 
     } catch (err) {
       setErrorMsg(err.message || 'Error al iniciar sesión');

@@ -38,7 +38,7 @@ export default function Asistencia() {
 
       setMensaje("✔️ Asistencia guardada correctamente.");
 
-      // desaparecer mensaje a los 3 segundos
+      
       setTimeout(() => setMensaje(""), 3000);
 
     } catch (e) {

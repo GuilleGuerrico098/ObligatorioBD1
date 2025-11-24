@@ -37,7 +37,7 @@ export default function Navbar() {
           Inicio
         </Link>
 
-        {/* Link a reportes solo para admin */}
+        
         {user?.es_admin && (
           <Link to="/reportes" style={{ color: 'white', textDecoration: 'none' }}>
             Reportes

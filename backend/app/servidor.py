@@ -179,19 +179,18 @@ def borrar_participante(ci: str, db=Depends(get_db)):
     email = row[0]
 
     try:
-        # Borrar el login asociado primero
+     
         cur.execute("DELETE FROM login WHERE correo = %s", (email,))
 
-        # Borrar de participante_programa_academico si aplica
+        
         cur.execute("DELETE FROM participante_programa_academico WHERE ci_participante = %s", (ci,))
 
-        # Borrar asistencia si hay
         cur.execute("DELETE FROM reserva_participante WHERE ci_participante = %s", (ci,))
 
-        # Borrar sanciones asociadas
+       
         cur.execute("DELETE FROM sancion_participante WHERE ci_participante = %s", (ci,))
 
-        # Ahora sí, borrar el participante
+      
         cur.execute("DELETE FROM participante WHERE ci = %s", (ci,))
 
         db.commit()
@@ -305,7 +304,7 @@ def actualizar_sala(body: SalaUpdate, db=Depends(get_db)):
 def eliminar_sala(nombre_sala: str, edificio: str, db=Depends(get_db)):
     cur = db.cursor()
     try:
-        # conseguir ID sala
+   
         cur.execute(
             "SELECT id_sala FROM sala WHERE nombre_sala = %s AND edificio = %s",
             (nombre_sala, edificio),
@@ -316,24 +315,22 @@ def eliminar_sala(nombre_sala: str, edificio: str, db=Depends(get_db)):
 
         id_sala = row[0]
 
-        # borrar participaciones de reservas vinculadas
         cur.execute("""
             DELETE rp FROM reserva_participante rp
             JOIN reserva r ON r.id_reserva = rp.id_reserva
             WHERE r.id_sala = %s
         """, (id_sala,))
 
-        # borrar sanciones asociadas a esas reservas
+        
         cur.execute("""
             DELETE sp FROM sancion_participante sp
             JOIN reserva r ON r.id_reserva = sp.id_reserva
             WHERE r.id_sala = %s
         """, (id_sala,))
 
-        # borrar reservas
         cur.execute("DELETE FROM reserva WHERE id_sala = %s", (id_sala,))
 
-        # finalmente borrar sala
+     
         cur.execute(
             "DELETE FROM sala WHERE id_sala = %s",
             (id_sala,),
@@ -969,15 +966,10 @@ def reportes_resumen(db=Depends(get_db)):
     """)
     promedio_participantes_por_sala = cur.fetchall()
 
-    # ----------------------------------------
-    # 4) RESERVAS POR CARRERA Y FACULTAD
-    # (NO EXISTE EN TU BD => DEVOLVER VACÍO)
-    # ----------------------------------------
     reservas_por_carrera_facultad = []
 
     # ----------------------------------------
     # 5) OCUPACIÓN POR EDIFICIO
-    # (SIMPLIFICADO PARA EVITAR ERRORES)
     # ----------------------------------------
     cur.execute("""
         SELECT s.edificio, COUNT(*) AS reservas

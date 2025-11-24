@@ -108,7 +108,7 @@ export default function CrearReserva() {
           </div>
         )}
 
-        {/* FORMULARIO COMO TABLA — IGUAL QUE MIS RESERVAS */}
+        
         <form onSubmit={handleSubmit}>
           <table
             style={{
@@ -217,7 +217,7 @@ export default function CrearReserva() {
           </div>
         </form>
 
-        {/* BOTONES EXACTAMENTE IGUALES A MIS RESERVAS */}
+        
         <div style={{ marginTop: 20, display: 'flex', gap: 10 }}>
           <button
             type="button"

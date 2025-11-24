@@ -1,4 +1,4 @@
-// frontend/src/api.js
+
 
 const API_URL = 'http://localhost:8000';
 
@@ -44,7 +44,7 @@ export function apiPut(path, body) {
   });
 }
 
-// 🔹 Lo volvemos a exponer porque Reservas.jsx (y capaz otros) lo usan
+
 export function apiPatch(path, body) {
   return apiFetch(path, {
     method: 'PATCH',

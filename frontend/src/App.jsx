@@ -1,4 +1,4 @@
-// src/App.jsx
+
 import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext.jsx';
@@ -15,17 +15,17 @@ import Salas from './pages/admin/Salas.jsx';
 import Reservas from './pages/admin/Reservas.jsx';
 import Sanciones from './pages/admin/Sanciones.jsx';
 import Asistencia from './pages/admin/Asistencia.jsx';
-import Reportes from './pages/admin/Reportes.jsx'; // 👈 nuevo import
+import Reportes from './pages/admin/Reportes.jsx'; 
 
 export default function App() {
   const { user } = useAuth();
 
-  // Si no hay usuario logueado, mostramos solo el login
+ 
   if (!user) {
     return <Login />;
   }
 
-  // Rutas para ADMIN
+
   if (user.es_admin) {
     return (
       <Routes>
@@ -41,7 +41,7 @@ export default function App() {
     );
   }
 
-  // Rutas para ALUMNO
+
   return (
     <Routes>
       <Route path="/" element={<AlumnoHome />} />
