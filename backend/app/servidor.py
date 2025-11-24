@@ -1,16 +1,13 @@
-from datetime import date, time as time_type, timedelta
-from typing import List, Dict
-
-from fastapi import FastAPI, HTTPException
+from typing import Optional, List, Literal
+from datetime import date, time, timedelta
+from fastapi import FastAPI, HTTPException, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr
 
-from .conexion import get_connection
+from .database import get_connection
 
+app = FastAPI(title="Salas de estudio UCU - Backend")
 
-app = FastAPI(title="API Salas de Estudio UCU", version="3.0.0")
-
-# ------------------ CORS ------------------
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -19,656 +16,1098 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ------------------ Modelos ------------------
-
 
 class LoginRequest(BaseModel):
-    correo: str
+    correo: EmailStr
     contrasena: str
 
 
+class LoginResponse(BaseModel):
+    correo: EmailStr
+    nombre: str
+    ci: str
+    es_admin: bool
+
+
 class ParticipanteCreate(BaseModel):
-    # OJO: acá no valido con regex para no romper nada
     ci: str
     nombre: str
     apellido: str
-    email: str
-    tipo: str   # espero 'grado' | 'posgrado' | 'docente'
+    email: EmailStr
+    tipo: Literal["grado", "posgrado", "docente"]
 
 
-class ReservaCreate(BaseModel):
-    fecha: date
-    id_sala: int
-    hora_inicio: time_type          # "HH:MM"
-    duracion_horas: int = Field(..., ge=1, le=2)
-    ci_responsable: str
-    participantes_ci: List[str]
-
-
-class AsistenciaUpdate(BaseModel):
-    asistentes: List[str]
+class ParticipanteUpdate(BaseModel):
+    nombre: str
+    apellido: str
+    email: EmailStr
+    tipo: Literal["grado", "posgrado", "docente"]
 
 
 class SalaCreate(BaseModel):
     nombre_sala: str
-    nombre_edificio: str
-    piso: int
+    edificio: str
     capacidad: int
-    tipo: str   # 'uso_libre' | 'exclusiva_posgrado' | 'exclusiva_docente'
+    tipo_sala: str
+
+
+class SalaUpdate(BaseModel):
+    nombre_sala: str
+    edificio: str
+    capacidad: int
+    tipo_sala: str
+
+
+class ReservaCreate(BaseModel):
+    fecha: date
+    nombre_sala: str
+    edificio: str
+    id_turno: int
+    ci_responsable: str
+    participantes: List[str]
+
+
+class ReservaUpdate(BaseModel):
+    fecha: date
+    nombre_sala: str
+    edificio: str
+    id_turno: int
 
 
 class SancionCreate(BaseModel):
-    ci: str
+    ci_participante: str
+    fecha_inicio: date
+    fecha_fin: date
     motivo: str
-    dias: int = 60
+    id_reserva: Optional[int] = None
 
 
-# ------------------ Helpers ------------------
+class AsistenciaUpdate(BaseModel):
+    presentes: List[str]
 
 
-def _validar_tipo_sala_con_participantes(tipo_sala: str, tipos_participantes: Dict[str, str]):
-    # Valida tipos de sala vs tipos de participante
-    if tipo_sala == "uso_libre":
-        return
-
-    if tipo_sala == "exclusiva_posgrado":
-        no_permitidos = [ci for ci, t in tipos_participantes.items() if t == "grado"]
-        if no_permitidos:
-            raise HTTPException(
-                status_code=400,
-                detail="Solo posgrado y docentes pueden reservar esta sala. CI no permitidas: "
-                + ", ".join(no_permitidos),
-            )
-
-    if tipo_sala == "exclusiva_docente":
-        no_permitidos = [ci for ci, t in tipos_participantes.items() if t != "docente"]
-        if no_permitidos:
-            raise HTTPException(
-                status_code=400,
-                detail="Solo docentes pueden reservar esta sala. CI no permitidas: "
-                + ", ".join(no_permitidos),
-            )
-
-
-def _calcular_rango_semana(fecha: date):
-    # Devuelve lunes y domingo de la semana de fecha
-    lunes = fecha - timedelta(days=fecha.weekday())
-    domingo = lunes + timedelta(days=6)
-    return lunes, domingo
-
-
-def _format_time_for_json(value):
-    # Convierte TIME/timedelta a 'HH:MM:SS'
-    if value is None:
-        return None
-
-    from datetime import timedelta as TD, time as TTIME
-
-    if isinstance(value, TD):
-        total_seconds = value.seconds
-        h = total_seconds // 3600
-        m = (total_seconds % 3600) // 60
-        return f"{h:02d}:{m:02d}:00"
-
-    if isinstance(value, TTIME):
-        return value.strftime("%H:%M:%S")
-
-    return str(value)
-
-
-# ------------------ Básico ------------------
-
-
-@app.get("/health")
-def health():
-    return {"status": "ok"}
-
-
-# ------------------ Login ------------------
-
-
-@app.post("/login")
-def login(data: LoginRequest):
-    # Login contra tabla login + participante
+def get_db():
     conn = get_connection()
     try:
-        cur = conn.cursor(dictionary=True)
-        cur.execute(
-            """
-            SELECT p.ci,
-                   p.nombre,
-                   p.apellido,
-                   p.email,
-                   p.tipo,
-                   l.correo,
-                   l.es_admin
-            FROM login l
-            JOIN participante p ON p.ci = l.ci_participante
-            WHERE l.correo = %s AND l.contrasena = %s
-            """,
-            (data.correo, data.contrasena),
-        )
-        row = cur.fetchone()
-        if not row:
-            raise HTTPException(status_code=401, detail="Correo o contraseña incorrectos")
-
-        return {
-            "ci": row["ci"],
-            "nombre": row["nombre"],
-            "apellido": row["apellido"],
-            "correo": row["correo"],
-            "email": row["email"],
-            "tipo": row["tipo"],
-            "esAdmin": bool(row.get("es_admin", 0)),
-        }
+        yield conn
     finally:
         conn.close()
 
 
-# ------------------ Participantes ------------------
+@app.post("/login", response_model=LoginResponse)
+def login(datos: LoginRequest, db=Depends(get_db)):
+    cur = db.cursor(dictionary=True)
+
+    cur.execute(
+        """
+        SELECT p.ci,
+               p.nombre,
+               p.apellido,
+               p.email,
+               l.contrasena
+        FROM login l
+        JOIN participante p ON p.email = l.correo
+        WHERE l.correo = %s
+        """,
+        (datos.correo,),
+    )
+    row = cur.fetchone()
+
+    if not row or row["contrasena"] != datos.contrasena:
+        raise HTTPException(status_code=401, detail="Credenciales inválidas")
+
+    cur.execute(
+        """
+        SELECT COUNT(*) AS es_docente
+        FROM participante_programa_academico ppa
+        WHERE ppa.ci_participante = %s AND ppa.rol = 'docente'
+        """,
+        (row["ci"],),
+    )
+    es_docente = cur.fetchone()["es_docente"] > 0
+
+    return LoginResponse(
+        correo=row["email"],
+        nombre=row["nombre"],
+        ci=row["ci"],
+        es_admin=es_docente,
+    )
 
 
 @app.get("/participantes")
-def listar_participantes():
-    # Lista participantes
-    conn = get_connection()
-    try:
-        cur = conn.cursor(dictionary=True)
-        cur.execute("SELECT ci, nombre, apellido, email, tipo FROM participante ORDER BY nombre")
-        return cur.fetchall()
-    finally:
-        conn.close()
+def listar_participantes(db=Depends(get_db)):
+    cur = db.cursor(dictionary=True)
+    cur.execute(
+        """
+        SELECT ci, nombre, apellido, email, tipo
+        FROM participante
+        ORDER BY apellido, nombre
+        """
+    )
+    rows = cur.fetchall()
+    return rows
 
 
 @app.post("/participantes")
-def crear_participante(data: ParticipanteCreate):
-    # Crea participante
-    conn = get_connection()
+def crear_participante(body: ParticipanteCreate, db=Depends(get_db)):
+    cur = db.cursor()
     try:
-        cur = conn.cursor()
-
-        # CI duplicada
-        cur.execute("SELECT ci FROM participante WHERE ci = %s", (data.ci,))
-        if cur.fetchone():
-            raise HTTPException(
-                status_code=400,
-                detail="Ya existe un participante con esa cédula",
-            )
-
-        # EMAIL duplicado (tus columnas tienen UNIQUE en email)
-        cur.execute("SELECT email FROM participante WHERE email = %s", (data.email,))
-        if cur.fetchone():
-            raise HTTPException(
-                status_code=400,
-                detail="Ya existe un participante con ese correo",
-            )
-
-        # Inserto
         cur.execute(
             """
             INSERT INTO participante (ci, nombre, apellido, email, tipo)
             VALUES (%s, %s, %s, %s, %s)
             """,
-            (data.ci, data.nombre, data.apellido, data.email, data.tipo),
+            (body.ci, body.nombre, body.apellido, body.email, body.tipo),
         )
-
-        conn.commit()
-        return {"ok": True}
-    finally:
-        conn.close()
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"message": "Participante creado"}
 
 
 @app.delete("/participantes/{ci}")
-def borrar_participante(ci: str):
-    # Borra participante por CI
-    conn = get_connection()
+def borrar_participante(ci: str, db=Depends(get_db)):
+    cur = db.cursor()
+
+    # Obtener email antes de borrar
+    cur.execute("SELECT email FROM participante WHERE ci = %s", (ci,))
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Participante no encontrado")
+
+    email = row[0]
+
     try:
-        cur = conn.cursor()
-        cur.execute("DELETE FROM reserva_participante WHERE ci = %s", (ci,))
-        cur.execute("DELETE FROM sancion_participante WHERE ci = %s", (ci,))
+        # Borrar el login asociado primero
+        cur.execute("DELETE FROM login WHERE correo = %s", (email,))
+
+        # Borrar de participante_programa_academico si aplica
+        cur.execute("DELETE FROM participante_programa_academico WHERE ci_participante = %s", (ci,))
+
+        # Borrar asistencia si hay
+        cur.execute("DELETE FROM reserva_participante WHERE ci_participante = %s", (ci,))
+
+        # Borrar sanciones asociadas
+        cur.execute("DELETE FROM sancion_participante WHERE ci_participante = %s", (ci,))
+
+        # Ahora sí, borrar el participante
         cur.execute("DELETE FROM participante WHERE ci = %s", (ci,))
-        conn.commit()
-        return {"ok": True}
-    finally:
-        conn.close()
 
+        db.commit()
 
-# ------------------ Salas ------------------
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return {"message": "Participante eliminado correctamente"}
+
+@app.put("/participantes/{ci}")
+def actualizar_participante(ci: str, body: ParticipanteUpdate, db=Depends(get_db)):
+    cur = db.cursor()
+
+    cur.execute("SELECT email FROM participante WHERE ci = %s", (ci,))
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Participante no encontrado")
+
+    email_anterior = row[0]
+
+    try:
+        cur.execute(
+            """
+            UPDATE participante
+            SET nombre = %s,
+                apellido = %s,
+                email = %s,
+                tipo = %s
+            WHERE ci = %s
+            """,
+            (body.nombre, body.apellido, body.email, body.tipo, ci),
+        )
+
+        cur.execute(
+            """
+            UPDATE login
+            SET correo = %s
+            WHERE correo = %s
+            """,
+            (body.email, email_anterior),
+        )
+
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return {"message": "Participante actualizado"}
 
 
 @app.get("/salas")
-def listar_salas():
-    # Lista salas
-    conn = get_connection()
-    try:
-        cur = conn.cursor(dictionary=True)
-        cur.execute(
-            """
-            SELECT id_sala,
-                   nombre_sala,
-                   nombre_edificio,
-                   capacidad,
-                   tipo
-            FROM sala
-            ORDER BY nombre_sala
-            """
-        )
-        return cur.fetchall()
-    finally:
-        conn.close()
+def listar_salas(db=Depends(get_db)):
+    cur = db.cursor(dictionary=True)
+    cur.execute(
+        """
+        SELECT id_sala, nombre_sala, edificio, capacidad, tipo_sala
+        FROM sala
+        ORDER BY edificio, nombre_sala
+        """
+    )
+    return cur.fetchall()
 
 
 @app.post("/salas")
-def crear_sala(data: SalaCreate):
-    # Crea sala
-    conn = get_connection()
+def crear_sala(body: SalaCreate, db=Depends(get_db)):
+    cur = db.cursor()
     try:
-        cur = conn.cursor()
         cur.execute(
             """
-            INSERT INTO sala (nombre_sala, nombre_edificio, piso, capacidad, tipo)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO sala (nombre_sala, edificio, capacidad, tipo_sala)
+            VALUES (%s, %s, %s, %s)
             """,
-            (data.nombre_sala, data.nombre_edificio, data.piso, data.capacidad, data.tipo),
+            (body.nombre_sala, body.edificio, body.capacidad, body.tipo_sala),
         )
-        conn.commit()
-        return {"ok": True}
-    finally:
-        conn.close()
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return {"message": "Sala creada"}
 
 
-@app.delete("/salas/{id_sala}")
-def borrar_sala(id_sala: int):
-    # Borra sala por id
-    conn = get_connection()
+@app.put("/salas/actualizar")
+def actualizar_sala(body: SalaUpdate, db=Depends(get_db)):
+    cur = db.cursor()
     try:
-        cur = conn.cursor()
-        # limpio reservas de esa sala
-        cur.execute("SELECT id_reserva FROM reserva WHERE id_sala = %s", (id_sala,))
-        ids = [r[0] for r in cur.fetchall()]
-        if ids:
-            in_clause = ",".join(["%s"] * len(ids))
-            cur.execute(f"DELETE FROM reserva_participante WHERE id_reserva IN ({in_clause})", ids)
-            cur.execute(f"DELETE FROM sancion_participante WHERE id_reserva IN ({in_clause})", ids)
-            cur.execute(f"DELETE FROM reserva WHERE id_reserva IN ({in_clause})", ids)
-        cur.execute("DELETE FROM sala WHERE id_sala = %s", (id_sala,))
-        conn.commit()
-        return {"ok": True}
-    finally:
-        conn.close()
+        cur.execute(
+            """
+            UPDATE sala
+            SET capacidad = %s,
+                tipo_sala = %s
+            WHERE nombre_sala = %s
+              AND edificio = %s
+            """,
+            (body.capacidad, body.tipo_sala, body.nombre_sala, body.edificio),
+        )
+
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Sala no encontrada")
+
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return {"message": "Sala actualizada"}
 
 
-# ------------------ Reservas (crear) ------------------
-
-
-@app.post("/reservas")
-def crear_reserva(data: ReservaCreate):
-    # Crea reserva con validaciones
-    hora_inicio = data.hora_inicio
-
-    if hora_inicio.minute != 0:
-        raise HTTPException(status_code=400, detail="La hora de inicio debe ser en punto (minutos 00).")
-
-    if hora_inicio.hour < 8 or hora_inicio.hour > 22:
-        raise HTTPException(status_code=400, detail="Inicio debe estar entre 08:00 y 22:00.")
-
-    hora_fin_hour = hora_inicio.hour + data.duracion_horas
-    if hora_fin_hour > 23:
-        raise HTTPException(status_code=400, detail="La reserva no puede terminar después de las 23:00.")
-
-    hora_fin = time_type(hour=hora_fin_hour, minute=0)
-
-    participantes_ci = list(dict.fromkeys(ci.strip() for ci in data.participantes_ci if ci.strip()))
-    if not participantes_ci:
-        raise HTTPException(status_code=400, detail="Debe indicarse al menos un participante.")
-
-    if data.ci_responsable not in participantes_ci:
-        participantes_ci.insert(0, data.ci_responsable)
-
-    conn = get_connection()
+@app.delete("/salas/{nombre_sala}/{edificio}")
+def eliminar_sala(nombre_sala: str, edificio: str, db=Depends(get_db)):
+    cur = db.cursor()
     try:
-        cur = conn.cursor(dictionary=True)
+        # conseguir ID sala
+        cur.execute(
+            "SELECT id_sala FROM sala WHERE nombre_sala = %s AND edificio = %s",
+            (nombre_sala, edificio),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Sala no encontrada")
 
-        # Sala
-        cur.execute("SELECT id_sala, capacidad, tipo FROM sala WHERE id_sala = %s", (data.id_sala,))
-        sala = cur.fetchone()
-        if not sala:
-            raise HTTPException(status_code=404, detail="Sala no encontrada.")
+        id_sala = row[0]
 
-        capacidad = sala["capacidad"]
-        tipo_sala = sala["tipo"]
+        # borrar participaciones de reservas vinculadas
+        cur.execute("""
+            DELETE rp FROM reserva_participante rp
+            JOIN reserva r ON r.id_reserva = rp.id_reserva
+            WHERE r.id_sala = %s
+        """, (id_sala,))
 
-        if len(participantes_ci) > capacidad:
+        # borrar sanciones asociadas a esas reservas
+        cur.execute("""
+            DELETE sp FROM sancion_participante sp
+            JOIN reserva r ON r.id_reserva = sp.id_reserva
+            WHERE r.id_sala = %s
+        """, (id_sala,))
+
+        # borrar reservas
+        cur.execute("DELETE FROM reserva WHERE id_sala = %s", (id_sala,))
+
+        # finalmente borrar sala
+        cur.execute(
+            "DELETE FROM sala WHERE id_sala = %s",
+            (id_sala,),
+        )
+
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Sala no encontrada")
+
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return {"message": "Sala eliminada"}
+
+
+@app.get("/turnos")
+def listar_turnos(db=Depends(get_db)):
+    cur = db.cursor(dictionary=True)
+    cur.execute(
+        "SELECT id_turno, hora_inicio, hora_fin FROM turno ORDER BY hora_inicio"
+    )
+    return cur.fetchall()
+
+
+def hay_choque_reserva(
+    db,
+    id_sala: int,
+    fecha: date,
+    id_turno: int,
+    excluir_id: Optional[int] = None,
+) -> bool:
+    cur = db.cursor()
+
+    query = """
+        SELECT COUNT(*)
+        FROM reserva
+        WHERE id_sala = %s
+          AND fecha = %s
+          AND id_turno = %s
+          AND estado = 'activa'
+    """
+    params = [id_sala, fecha, id_turno]
+
+    if excluir_id is not None:
+        query += " AND id_reserva <> %s"
+        params.append(excluir_id)
+
+    cur.execute(query, params)
+    (count,) = cur.fetchone()
+    return count > 0
+
+
+def participante_tiene_sancion_activa(db, ci: str, fecha: date) -> bool:
+    cur = db.cursor()
+    cur.execute(
+        """
+        SELECT COUNT(*)
+        FROM sancion_participante
+        WHERE ci_participante = %s
+          AND %s BETWEEN fecha_inicio AND fecha_fin
+        """,
+        (ci, fecha),
+    )
+    (count,) = cur.fetchone()
+    return count > 0
+
+
+def validar_limites_participante(
+    db,
+    ci: str,
+    fecha: date,
+    id_turno: int,
+    minutos_turno: int,
+    tipo_sala: str,
+    excluir_id: Optional[int] = None,
+):
+    cur = db.cursor()
+
+    cur.execute(
+        "SELECT tipo FROM participante WHERE ci = %s",
+        (ci,),
+    )
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Participante {ci} no existe")
+    tipo_participante = row[0]
+
+    if participante_tiene_sancion_activa(db, ci, fecha):
+        raise HTTPException(
+            status_code=400,
+            detail=f"El participante {ci} tiene una sanción activa para esa fecha y no puede reservar",
+        )
+
+    if tipo_sala == "exclusiva_docente":
+        if tipo_participante != "docente":
             raise HTTPException(
                 status_code=400,
-                detail=f"Hay {len(participantes_ci)} participantes y la capacidad es {capacidad}.",
+                detail=f"Solo docentes pueden reservar en salas exclusivas de docentes (CI {ci})",
             )
+        return
 
-        # Participantes y tipos
-        placeholders = ",".join(["%s"] * len(participantes_ci))
-        cur.execute(
-            f"SELECT ci, tipo FROM participante WHERE ci IN ({placeholders})",
-            participantes_ci,
-        )
-        rows = cur.fetchall()
-        tipos_participantes = {r["ci"]: r["tipo"] for r in rows}
-        faltantes = [ci for ci in participantes_ci if ci not in tipos_participantes]
-        if faltantes:
+    if tipo_sala == "exclusiva_posgrado":
+        if tipo_participante != "posgrado":
             raise HTTPException(
                 status_code=400,
-                detail="Hay participantes que no existen: " + ", ".join(faltantes),
+                detail=f"Solo estudiantes de posgrado pueden reservar en salas exclusivas de posgrado (CI {ci})",
             )
+        return
 
-        # Sanciones vigentes
-        hoy = data.fecha
-        cur.execute(
-            f"""
-            SELECT DISTINCT ci
-            FROM sancion_participante
-            WHERE ci IN ({placeholders})
-              AND %s BETWEEN fecha_inicio AND fecha_fin
-            """,
-            participantes_ci + [hoy],
-        )
-        sancionados = [r["ci"] for r in cur.fetchall()]
-        if sancionados:
-            raise HTTPException(
-                status_code=400,
-                detail="Estos participantes tienen sanción vigente: " + ", ".join(sancionados),
-            )
-
-        # Tipo de sala vs participantes
-        _validar_tipo_sala_con_participantes(tipo_sala, tipos_participantes)
-
-        # Restricciones grado en uso_libre
-        if tipo_sala == "uso_libre":
-            grado_cis = [ci for ci, t in tipos_participantes.items() if t == "grado"]
-
-            if grado_cis:
-                placeholders_grado = ",".join(["%s"] * len(grado_cis))
-                # max 2 horas por día
-                cur.execute(
-                    f"""
-                    SELECT rp.ci,
-                           COALESCE(
-                             SUM(TIME_TO_SEC(TIMEDIFF(r.hora_fin, r.hora_inicio)) / 3600),
-                             0
-                           ) AS horas
-                    FROM reserva r
-                    JOIN reserva_participante rp ON rp.id_reserva = r.id_reserva
-                    JOIN sala s ON s.id_sala = r.id_sala
-                    WHERE r.fecha = %s
-                      AND s.tipo = 'uso_libre'
-                      AND r.estado = 'activa'
-                      AND rp.ci IN ({placeholders_grado})
-                    GROUP BY rp.ci
-                    """,
-                    [data.fecha] + grado_cis,
+    cur.execute(
+        """
+        SELECT COALESCE(
+            SUM(
+                TIMESTAMPDIFF(
+                    MINUTE,
+                    t.hora_inicio,
+                    t.hora_fin
                 )
-                horas_ya = {r["ci"]: float(r["horas"]) for r in cur.fetchall()}
-                for ci in grado_cis:
-                    if horas_ya.get(ci, 0.0) + data.duracion_horas > 2:
-                        raise HTTPException(
-                            status_code=400,
-                            detail=f"CI {ci} excede las 2 horas por día en salas de uso libre.",
-                        )
-
-                # max 3 reservas por semana
-                lunes, domingo = _calcular_rango_semana(data.fecha)
-                cur.execute(
-                    f"""
-                    SELECT rp.ci, COUNT(*) AS cantidad
-                    FROM reserva r
-                    JOIN reserva_participante rp ON rp.id_reserva = r.id_reserva
-                    JOIN sala s ON s.id_sala = r.id_sala
-                    WHERE r.fecha BETWEEN %s AND %s
-                      AND s.tipo = 'uso_libre'
-                      AND r.estado = 'activa'
-                      AND rp.ci IN ({placeholders_grado})
-                    GROUP BY rp.ci
-                    """,
-                    [lunes, domingo] + grado_cis,
-                )
-                reservas_sem = {r["ci"]: int(r["cantidad"]) for r in cur.fetchall()}
-                for ci in grado_cis:
-                    if reservas_sem.get(ci, 0) + 1 > 3:
-                        raise HTTPException(
-                            status_code=400,
-                            detail=f"CI {ci} excede las 3 reservas activas por semana en salas de uso libre.",
-                        )
-
-        # Superposición en sala / fecha
-        cur.execute(
-            """
-            SELECT hora_inicio, hora_fin
-            FROM reserva
-            WHERE id_sala = %s
-              AND fecha = %s
-              AND estado = 'activa'
-            """,
-            (data.id_sala, data.fecha),
+            ), 0
+        ) AS minutos
+        FROM reserva r
+        JOIN reserva_participante rp ON r.id_reserva = rp.id_reserva
+        JOIN turno t ON r.id_turno = t.id_turno
+        WHERE rp.ci_participante = %s
+          AND r.fecha = %s
+          AND r.estado = 'activa'
+        """
+        + (" AND r.id_reserva <> %s" if excluir_id is not None else ""),
+        (ci, fecha) + ((excluir_id,) if excluir_id is not None else ()),
+    )
+    (minutos_existentes,) = cur.fetchone()
+    if minutos_existentes + minutos_turno > 120:
+        raise HTTPException(
+            status_code=400,
+            detail=f"El participante {ci} supera el máximo de 2 horas diarias de reserva para esa fecha",
         )
-        for r in cur.fetchall():
-            ini_exist: time_type = r["hora_inicio"]
-            fin_exist: time_type = r["hora_fin"]
-            if not (hora_fin <= ini_exist or hora_inicio >= fin_exist):
-                raise HTTPException(
-                    status_code=400,
-                    detail="Ya existe una reserva activa para esa sala en ese horario.",
-                )
 
-        # Insert reserva
-        cur = conn.cursor()
-        cur.execute(
-            """
-            INSERT INTO reserva (id_sala, fecha, hora_inicio, hora_fin, ci_responsable, estado)
-            VALUES (%s, %s, %s, %s, %s, 'activa')
-            """,
-            (data.id_sala, data.fecha, hora_inicio, hora_fin, data.ci_responsable),
+    inicio_semana = fecha - timedelta(days=6)
+
+    cur.execute(
+        """
+        SELECT COUNT(*)
+        FROM reserva r
+        JOIN reserva_participante rp ON r.id_reserva = rp.id_reserva
+        WHERE rp.ci_participante = %s
+          AND r.fecha BETWEEN %s AND %s
+          AND r.estado = 'activa'
+        """
+        + (" AND r.id_reserva <> %s" if excluir_id is not None else ""),
+        (ci, inicio_semana, fecha)
+        + ((excluir_id,) if excluir_id is not None else ()),
+    )
+    (cant_semana,) = cur.fetchone()
+    if cant_semana + 1 > 3:
+        raise HTTPException(
+            status_code=400,
+            detail=f"El participante {ci} supera el máximo de 3 reservas activas en la semana",
         )
-        id_reserva = cur.lastrowid
-
-        # Insert participantes
-        for ci in participantes_ci:
-            es_responsable = 1 if ci == data.ci_responsable else 0
-            cur.execute(
-                """
-                INSERT INTO reserva_participante (id_reserva, ci, es_responsable, asistio)
-                VALUES (%s, %s, %s, 'pendiente')
-                """,
-                (id_reserva, ci, es_responsable),
-            )
-
-        conn.commit()
-        return {"id_reserva": id_reserva}
-    finally:
-        conn.close()
 
 
-# ------------------ Mis reservas ------------------
+@app.get("/reservas")
+def listar_reservas(db=Depends(get_db)):
+    cur = db.cursor(dictionary=True)
+    cur.execute(
+        """
+        SELECT
+            r.id_reserva,
+            r.fecha,
+            r.estado,
+            r.id_turno,
+            t.hora_inicio,
+            t.hora_fin,
+            s.id_sala,
+            s.nombre_sala,
+            s.edificio,
+            s.capacidad,
+            s.tipo_sala,
+            p.ci          AS ci_responsable,
+            p.nombre      AS nombre_responsable,
+            p.apellido    AS apellido_responsable
+        FROM reserva r
+        JOIN sala s          ON r.id_sala = s.id_sala
+        JOIN participante p  ON r.ci_responsable = p.ci
+        JOIN turno t         ON r.id_turno = t.id_turno
+        ORDER BY r.fecha DESC, t.hora_inicio
+        """
+    )
+    return cur.fetchall()
 
 
-@app.get("/mis-reservas/{ci}")
-def mis_reservas(ci: str):
-    # Reservas donde participa una CI
-    conn = get_connection()
+@app.get("/reservas/mias")
+def listar_reservas_mias(ci: str, db=Depends(get_db)):
+    cur = db.cursor(dictionary=True)
+    cur.execute(
+        """
+        SELECT
+            r.id_reserva,
+            r.fecha,
+            r.estado,
+            r.id_turno,
+            t.hora_inicio,
+            t.hora_fin,
+            s.nombre_sala,
+            s.edificio
+        FROM reserva r
+        JOIN reserva_participante rp ON r.id_reserva = rp.id_reserva
+        JOIN sala s                  ON r.id_sala = s.id_sala
+        JOIN turno t                 ON r.id_turno = t.id_turno
+        WHERE rp.ci_participante = %s
+        ORDER BY r.fecha DESC, t.hora_inicio
+        """,
+        (ci,),
+    )
+    return cur.fetchall()
+
+
+@app.get("/reservas/{id_reserva}/participantes")
+def listar_participantes_reserva(id_reserva: int, db=Depends(get_db)):
+    cur = db.cursor(dictionary=True)
+    cur.execute(
+        """
+        SELECT
+            rp.ci_participante,
+            p.nombre,
+            p.apellido,
+            rp.es_responsable,
+            rp.asistio
+        FROM reserva_participante rp
+        JOIN participante p ON p.ci = rp.ci_participante
+        WHERE rp.id_reserva = %s
+        ORDER BY rp.es_responsable DESC, p.apellido, p.nombre
+        """,
+        (id_reserva,),
+    )
+    return cur.fetchall()
+def participante_sancionado(db, ci: str):
+    cur = db.cursor()
+    cur.execute(
+        """
+        SELECT COUNT(*)
+        FROM sancion_participante
+        WHERE ci_participante = %s
+          AND CURDATE() BETWEEN fecha_inicio AND fecha_fin
+        """,
+        (ci,)
+    )
+    (cant,) = cur.fetchone()
+    return cant > 0
+
+
+@app.post("/reservas/{id_reserva}/asistencia")
+def registrar_asistencia(
+    id_reserva: int, body: AsistenciaUpdate, db=Depends(get_db)
+):
+    presentes = set(body.presentes)
+
+    cur = db.cursor()
+
+    cur.execute(
+        "SELECT fecha FROM reserva WHERE id_reserva = %s",
+        (id_reserva,),
+    )
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Reserva no encontrada")
+    fecha_reserva = row[0]
+
+    cur.execute(
+        "SELECT ci_participante FROM reserva_participante WHERE id_reserva = %s",
+        (id_reserva,),
+    )
+    participantes_rows = cur.fetchall()
+    participantes = [r[0] for r in participantes_rows]
+    if not participantes:
+        raise HTTPException(
+            status_code=400,
+            detail="La reserva no tiene participantes registrados",
+        )
+
     try:
-        cur = conn.cursor(dictionary=True)
-        cur.execute(
-            """
-            SELECT
-                r.id_reserva,
-                r.fecha,
-                r.hora_inicio,
-                r.hora_fin,
-                r.ci_responsable,
-                s.nombre_sala,
-                CASE
-                    WHEN CONCAT(r.fecha, ' ', r.hora_fin) < NOW() THEN 'pasada'
-                    WHEN CONCAT(r.fecha, ' ', r.hora_inicio) > NOW() THEN 'futura'
-                    ELSE 'activa'
-                END AS situacion
-            FROM reserva r
-            JOIN reserva_participante rp ON rp.id_reserva = r.id_reserva
-            JOIN sala s ON s.id_sala = r.id_sala
-            WHERE rp.ci = %s
-            ORDER BY r.fecha DESC, r.hora_inicio DESC
-            """,
-            (ci,),
-        )
-        filas = cur.fetchall()
-        for r in filas:
-            r["hora_inicio"] = _format_time_for_json(r["hora_inicio"])
-            r["hora_fin"] = _format_time_for_json(r["hora_fin"])
-        return filas
-    finally:
-        conn.close()
-
-
-# ------------------ Reservas admin ------------------
-
-
-@app.get("/reservas-admin")
-def reservas_admin():
-    # Lista de reservas para admin
-    conn = get_connection()
-    try:
-        cur = conn.cursor(dictionary=True)
-        cur.execute(
-            """
-            SELECT
-                r.id_reserva,
-                r.fecha,
-                r.hora_inicio,
-                r.hora_fin,
-                r.estado,
-                s.nombre_sala
-            FROM reserva r
-            JOIN sala s ON s.id_sala = r.id_sala
-            ORDER BY r.fecha DESC, r.hora_inicio DESC
-            """
-        )
-        filas = cur.fetchall()
-        for r in filas:
-            r["hora_inicio"] = _format_time_for_json(r["hora_inicio"])
-            r["hora_fin"] = _format_time_for_json(r["hora_fin"])
-        return filas
-    finally:
-        conn.close()
-
-
-# ------------------ Asistencia y sanciones auto ------------------
-
-
-@app.put("/reservas/{id_reserva}/asistencia")
-def registrar_asistencia(id_reserva: int, data: AsistenciaUpdate):
-    # Registra asistencia y penaliza si nadie fue
-    conn = get_connection()
-    try:
-        cur = conn.cursor(dictionary=True)
-
-        cur.execute("SELECT ci FROM reserva_participante WHERE id_reserva = %s", (id_reserva,))
-        participantes = [r["ci"] for r in cur.fetchall()]
-        if not participantes:
-            raise HTTPException(status_code=404, detail="La reserva no tiene participantes.")
-
-        asistentes = set(data.asistentes)
-
-        cur2 = conn.cursor()
         for ci in participantes:
-            estado = "asistio" if ci in asistentes else "no_asistio"
-            cur2.execute(
+            asistio = 1 if ci in presentes else 0
+            cur.execute(
                 """
                 UPDATE reserva_participante
                 SET asistio = %s
-                WHERE id_reserva = %s AND ci = %s
+                WHERE id_reserva = %s AND ci_participante = %s
                 """,
-                (estado, id_reserva, ci),
+                (asistio, id_reserva, ci),
             )
 
-        if len(asistentes) == 0:
-            cur.execute("SELECT fecha FROM reserva WHERE id_reserva = %s", (id_reserva,))
-            row = cur.fetchone()
-            if not row:
-                raise HTTPException(status_code=404, detail="Reserva no encontrada.")
-            fecha_reserva: date = row["fecha"]
+        if not presentes:
+            fecha_inicio = fecha_reserva
             fecha_fin = fecha_reserva + timedelta(days=60)
-
-            cur3 = conn.cursor()
             for ci in participantes:
-                cur3.execute(
+                cur.execute(
                     """
-                    INSERT INTO sancion_participante (ci, fecha_inicio, fecha_fin, motivo, id_reserva)
+                    INSERT INTO sancion_participante
+                        (ci_participante, fecha_inicio, fecha_fin, motivo, id_reserva)
                     VALUES (%s, %s, %s, %s, %s)
                     """,
-                    (ci, fecha_reserva, fecha_fin, "No asistencia a reserva", id_reserva),
+                    (
+                        ci,
+                        fecha_inicio,
+                        fecha_fin,
+                        "Ausencia a la reserva sin aviso",
+                        id_reserva,
+                    ),
                 )
 
-        cur.execute("UPDATE reserva SET estado = 'finalizada' WHERE id_reserva = %s", (id_reserva,))
-        conn.commit()
-        return {"ok": True}
-    finally:
-        conn.close()
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return {"message": "Asistencia registrada"}
 
 
-# ------------------ Sanciones ------------------
+@app.post("/reservas")
+def crear_reserva(body: ReservaCreate, db=Depends(get_db)):
+    if not body.participantes:
+        raise HTTPException(status_code=400, detail="Debe haber al menos un participante")
+
+    participantes = list(dict.fromkeys(body.participantes))
+    if body.ci_responsable not in participantes:
+        participantes.insert(0, body.ci_responsable)
+
+    cur = db.cursor()
+
+    cur.execute(
+        """
+        SELECT id_sala, capacidad, tipo_sala
+        FROM sala
+        WHERE nombre_sala = %s AND edificio = %s
+        """,
+        (body.nombre_sala, body.edificio),
+    )
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Sala no encontrada")
+
+    id_sala, capacidad, tipo_sala = row
+
+    if len(participantes) > capacidad:
+        raise HTTPException(
+            status_code=400,
+            detail=f"La sala admite hasta {capacidad} participantes",
+        )
+
+    cur.execute(
+        """
+        SELECT TIMESTAMPDIFF(
+                   MINUTE,
+                   hora_inicio,
+                   hora_fin
+               ) AS minutos
+        FROM turno
+        WHERE id_turno = %s
+        """,
+        (body.id_turno,),
+    )
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Turno no encontrado")
+    minutos_turno = row[0]
+
+    if hay_choque_reserva(db, id_sala, body.fecha, body.id_turno):
+        raise HTTPException(
+            status_code=400,
+            detail="Ya existe una reserva activa para esa sala en ese turno",
+        )
+
+    for ci_par in participantes:
+        validar_limites_participante(
+            db,
+            ci_par,
+            body.fecha,
+            body.id_turno,
+            minutos_turno,
+            tipo_sala,
+        )
+
+    try:
+        cur.execute(
+            """
+            INSERT INTO reserva (fecha, id_sala, id_turno, ci_responsable, estado)
+            VALUES (%s, %s, %s, %s, 'activa')
+            """,
+            (
+                body.fecha,
+                id_sala,
+                body.id_turno,
+                body.ci_responsable,
+            ),
+        )
+        id_reserva = cur.lastrowid
+
+        for ci_par in participantes:
+            cur.execute(
+                """
+                INSERT INTO reserva_participante
+                    (id_reserva, ci_participante, es_responsable, asistio)
+                VALUES (%s, %s, %s, 0)
+                """,
+                (
+                    id_reserva,
+                    ci_par,
+                    1 if ci_par == body.ci_responsable else 0,
+                ),
+            )
+
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return {"message": "Reserva creada", "id_reserva": id_reserva}
+
+
+@app.put("/reservas/{id_reserva}")
+def modificar_reserva(id_reserva: int, body: ReservaUpdate, db=Depends(get_db)):
+    cur = db.cursor()
+
+    cur.execute(
+        """
+        SELECT id_sala, capacidad, tipo_sala
+        FROM sala
+        WHERE nombre_sala = %s AND edificio = %s
+        """,
+        (body.nombre_sala, body.edificio),
+    )
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Sala no encontrada")
+    id_sala, capacidad, tipo_sala = row
+
+    cur.execute(
+        """
+        SELECT TIMESTAMPDIFF(
+                   MINUTE,
+                   hora_inicio,
+                   hora_fin
+               ) AS minutos
+        FROM turno
+        WHERE id_turno = %s
+        """,
+        (body.id_turno,),
+    )
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Turno no encontrado")
+    minutos_turno = row[0]
+
+    if hay_choque_reserva(
+        db, id_sala, body.fecha, body.id_turno, excluir_id=id_reserva
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Ya existe una reserva activa para esa sala en ese turno",
+        )
+
+    cur.execute(
+        """
+        SELECT ci_participante
+        FROM reserva_participante
+        WHERE id_reserva = %s
+        """,
+        (id_reserva,),
+    )
+    participantes = [row[0] for row in cur.fetchall()]
+
+    for ci_par in participantes:
+        validar_limites_participante(
+            db,
+            ci_par,
+            body.fecha,
+            body.id_turno,
+            minutos_turno,
+            tipo_sala,
+            excluir_id=id_reserva,
+        )
+
+    try:
+        cur.execute(
+            """
+            UPDATE reserva
+            SET fecha = %s,
+                id_sala = %s,
+                id_turno = %s
+            WHERE id_reserva = %s
+            """,
+            (
+                body.fecha,
+                id_sala,
+                body.id_turno,
+                id_reserva,
+            ),
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Reserva no encontrada")
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return {"message": "Reserva modificada"}
+
+
+@app.delete("/reservas/{id_reserva}")
+def cancelar_reserva(id_reserva: int, db=Depends(get_db)):
+    cur = db.cursor()
+    try:
+        cur.execute(
+            """
+            UPDATE reserva
+            SET estado = 'cancelada'
+            WHERE id_reserva = %s AND estado = 'activa'
+            """,
+            (id_reserva,),
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(
+                status_code=404,
+                detail="Reserva no encontrada o ya cancelada",
+            )
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return {"message": "Reserva cancelada"}
 
 
 @app.get("/sanciones")
-def listar_sanciones():
-    # Lista sanciones
-    conn = get_connection()
-    try:
-        cur = conn.cursor(dictionary=True)
-        cur.execute(
-            """
-            SELECT
-                s.id_sancion,
-                s.ci,
-                s.motivo,
-                s.fecha_inicio,
-                s.fecha_fin,
-                p.nombre,
-                p.apellido
-            FROM sancion_participante s
-            LEFT JOIN participante p ON p.ci = s.ci
-            ORDER BY s.fecha_inicio DESC
-            """
-        )
-        return cur.fetchall()
-    finally:
-        conn.close()
+def listar_sanciones(db=Depends(get_db)):
+    cur = db.cursor(dictionary=True)
+    cur.execute(
+        """
+        SELECT id_sancion, ci_participante, fecha_inicio, fecha_fin, motivo, id_reserva
+        FROM sancion_participante
+        ORDER BY fecha_inicio DESC
+        """
+    )
+    return cur.fetchall()
 
 
 @app.post("/sanciones")
-def crear_sancion(data: SancionCreate):
-    # Crea sanción manual
-    conn = get_connection()
+def crear_sancion(body: SancionCreate, db=Depends(get_db)):
+    cur = db.cursor()
     try:
-        cur = conn.cursor()
-        hoy = date.today()
-        fin = hoy + timedelta(days=data.dias)
         cur.execute(
             """
-            INSERT INTO sancion_participante (ci, fecha_inicio, fecha_fin, motivo)
-            VALUES (%s, %s, %s, %s)
+            INSERT INTO sancion_participante
+                (ci_participante, fecha_inicio, fecha_fin, motivo, id_reserva)
+            VALUES (%s, %s, %s, %s, %s)
             """,
-            (data.ci, hoy, fin, data.motivo),
+            (
+                body.ci_participante,
+                body.fecha_inicio,
+                body.fecha_fin,
+                body.motivo,
+                body.id_reserva,
+            ),
         )
-        conn.commit()
-        return {"ok": True}
-    finally:
-        conn.close()
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"message": "Sanción creada"}
 
 
 @app.delete("/sanciones/{id_sancion}")
-def borrar_sancion(id_sancion: int):
-    # Borra sanción por id
-    conn = get_connection()
+def eliminar_sancion(id_sancion: int, db=Depends(get_db)):
+    cur = db.cursor()
     try:
-        cur = conn.cursor()
-        cur.execute("DELETE FROM sancion_participante WHERE id_sancion = %s", (id_sancion,))
-        conn.commit()
-        return {"ok": True}
-    finally:
-        conn.close()
+        cur.execute(
+            "DELETE FROM sancion_participante WHERE id_sancion = %s",
+            (id_sancion,),
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Sanción no encontrada")
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"message": "Sanción eliminada"}
+
+@app.get("/reportes/resumen")
+def reportes_resumen(db=Depends(get_db)):
+    cur = db.cursor(dictionary=True)
+
+    # ----------------------------------------
+    # 1) SALAS MÁS RESERVADAS
+    # ----------------------------------------
+    cur.execute("""
+        SELECT s.id_sala, s.edificio, s.nombre_sala, COUNT(*) AS cantidad_reservas
+        FROM reserva r
+        JOIN sala s ON s.id_sala = r.id_sala
+        GROUP BY s.id_sala, s.edificio, s.nombre_sala
+        ORDER BY cantidad_reservas DESC
+    """)
+    salas_mas_reservadas = cur.fetchall()
+
+    # ----------------------------------------
+    # 2) TURNOS MÁS DEMANDADOS
+    # ----------------------------------------
+    cur.execute("""
+        SELECT t.id_turno, t.hora_inicio, t.hora_fin, COUNT(*) AS cantidad_reservas
+        FROM reserva r
+        JOIN turno t ON t.id_turno = r.id_turno
+        GROUP BY t.id_turno, t.hora_inicio, t.hora_fin
+        ORDER BY cantidad_reservas DESC
+    """)
+    turnos_mas_demandados = cur.fetchall()
+
+    # ----------------------------------------
+    # 3) PROMEDIO PARTICIPANTES POR SALA
+    # ----------------------------------------
+    cur.execute("""
+        SELECT 
+            s.id_sala, s.edificio, s.nombre_sala,
+            AVG(sub.cant_participantes) AS promedio_participantes
+        FROM (
+            SELECT r.id_reserva, r.id_sala,
+                   COUNT(rp.ci_participante) AS cant_participantes
+            FROM reserva r
+            JOIN reserva_participante rp ON rp.id_reserva = r.id_reserva
+            GROUP BY r.id_reserva, r.id_sala
+        ) sub
+        JOIN sala s ON s.id_sala = sub.id_sala
+        GROUP BY s.id_sala, s.edificio, s.nombre_sala
+    """)
+    promedio_participantes_por_sala = cur.fetchall()
+
+    # ----------------------------------------
+    # 4) RESERVAS POR CARRERA Y FACULTAD
+    # (NO EXISTE EN TU BD => DEVOLVER VACÍO)
+    # ----------------------------------------
+    reservas_por_carrera_facultad = []
+
+    # ----------------------------------------
+    # 5) OCUPACIÓN POR EDIFICIO
+    # (SIMPLIFICADO PARA EVITAR ERRORES)
+    # ----------------------------------------
+    cur.execute("""
+        SELECT s.edificio, COUNT(*) AS reservas
+        FROM reserva r
+        JOIN sala s ON s.id_sala = r.id_sala
+        GROUP BY s.edificio
+    """)
+    reservas_por_edificio = cur.fetchall()
+
+    ocupacion_por_edificio = [
+        {
+            "edificio": r["edificio"],
+            "reservas": r["reservas"],
+            "capacidad_total": 0,
+            "participantes_totales": 0,
+            "porcentaje_ocupacion": 0
+        }
+        for r in reservas_por_edificio
+    ]
+
+    # ----------------------------------------
+    # 6) RESERVAS Y ASISTENCIAS POR TIPO
+    # ----------------------------------------
+    cur.execute("""
+        SELECT p.tipo,
+               COUNT(DISTINCT r.id_reserva) AS reservas,
+               SUM(CASE WHEN rp.asistio = 1 THEN 1 ELSE 0 END) AS asistencias
+        FROM reserva_participante rp
+        JOIN reserva r ON r.id_reserva = rp.id_reserva
+        JOIN participante p ON p.ci = rp.ci_participante
+        GROUP BY p.tipo
+    """)
+    reservas_y_asistencias_por_tipo = cur.fetchall()
+
+    # ----------------------------------------
+    # 7) SANCIONES POR TIPO
+    # ----------------------------------------
+    cur.execute("""
+        SELECT p.tipo, COUNT(*) AS sanciones
+        FROM sancion_participante sp
+        JOIN participante p ON p.ci = sp.ci_participante
+        GROUP BY p.tipo
+    """)
+    sanciones_por_tipo = cur.fetchall()
+
+    # ----------------------------------------
+    # 8) USO DE RESERVAS
+    # ----------------------------------------
+    cur.execute("SELECT COUNT(*) AS total FROM reserva")
+    total = cur.fetchone()["total"]
+
+    cur.execute("""
+        SELECT COUNT(DISTINCT r.id_reserva) AS usadas
+        FROM reserva r
+        JOIN reserva_participante rp ON rp.id_reserva = r.id_reserva
+        WHERE rp.asistio = 1
+    """)
+    usadas = cur.fetchone()["usadas"]
+
+    cur.execute("SELECT COUNT(*) AS canceladas FROM reserva WHERE estado = 'cancelada'")
+    canceladas = cur.fetchone()["canceladas"]
+
+    cur.execute("""
+        SELECT COUNT(*) AS sin_asistencia
+        FROM reserva r
+        WHERE r.estado = 'activa'
+          AND NOT EXISTS (
+              SELECT 1 FROM reserva_participante rp
+              WHERE rp.id_reserva = r.id_reserva AND rp.asistio = 1
+          )
+    """)
+    sin_asistencia = cur.fetchone()["sin_asistencia"]
+
+    uso_reservas = {
+        "total_reservas": total,
+        "usadas": usadas,
+        "canceladas": canceladas,
+        "sin_asistencia": sin_asistencia,
+        "porcentaje_usadas": round((usadas / total * 100) if total else 0, 2),
+        "porcentaje_canceladas": round((canceladas / total * 100) if total else 0, 2),
+        "porcentaje_sin_asistencia": round((sin_asistencia / total * 100) if total else 0, 2),
+    }
+
+    # ----------------------------------------
+    # 9) TOP PARTICIPANTES
+    # ----------------------------------------
+    cur.execute("""
+        SELECT p.ci, p.nombre, p.apellido, p.tipo,
+               COUNT(rp.id_reserva) AS cantidad_reservas
+        FROM participante p
+        JOIN reserva_participante rp ON rp.ci_participante = p.ci
+        GROUP BY p.ci
+        ORDER BY cantidad_reservas DESC
+        LIMIT 5
+    """)
+    top_participantes = cur.fetchall()
+
+    # ----------------------------------------
+    # 10) RESERVAS POR TIPO DE SALA
+    # ----------------------------------------
+    cur.execute("""
+        SELECT s.tipo_sala, COUNT(*) AS cantidad_reservas
+        FROM reserva r
+        JOIN sala s ON s.id_sala = r.id_sala
+        GROUP BY s.tipo_sala
+    """)
+    reservas_por_tipo_sala = cur.fetchall()
+
+    # ----------------------------------------
+    # 11) RESERVAS POR DÍA DE LA SEMANA
+    # ----------------------------------------
+    cur.execute("""
+        SELECT 
+            DAYNAME(fecha) AS nombre_dia,
+            COUNT(*) AS cantidad_reservas
+        FROM reserva
+        GROUP BY nombre_dia
+    """)
+    reservas_por_dia_semana = cur.fetchall()
+
+    return {
+        "salas_mas_reservadas": salas_mas_reservadas,
+        "turnos_mas_demandados": turnos_mas_demandados,
+        "promedio_participantes_por_sala": promedio_participantes_por_sala,
+        "reservas_por_carrera_facultad": reservas_por_carrera_facultad,
+        "ocupacion_por_edificio": ocupacion_por_edificio,
+        "reservas_y_asistencias_por_tipo": reservas_y_asistencias_por_tipo,
+        "sanciones_por_tipo": sanciones_por_tipo,
+        "uso_reservas": uso_reservas,
+        "top_participantes": top_participantes,
+        "reservas_por_tipo_sala": reservas_por_tipo_sala,
+        "reservas_por_dia_semana": reservas_por_dia_semana,
+    }
